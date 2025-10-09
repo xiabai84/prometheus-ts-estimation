@@ -3,68 +3,132 @@ import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 from sklearn.cluster import KMeans, DBSCAN
-from sklearn.preprocessing import StandardScaler
+from sklearn.preprocessing import StandardScaler, RobustScaler
 from sklearn.impute import SimpleImputer
 from sklearn.metrics import silhouette_score
 from sklearn.decomposition import PCA
+from sklearn.ensemble import IsolationForest
+from scipy import stats
 import warnings
 warnings.filterwarnings('ignore')
 
-class UnsupervisedClustering:
-    def __init__(self, weights=None, n_clusters=3, clustering_method='kmeans'):
+class AdvancedUnsupervisedClustering:
+    def __init__(self, weights=None, n_clusters=3, clustering_method='kmeans', 
+                 outlier_method='isolation_forest', normalization_method='standard'):
         """
-        Initialize the clustering model
+        Initialize the clustering model with advanced features
         
         Parameters:
         - weights: dict or list, feature weights
         - n_clusters: int, number of clusters
         - clustering_method: str, 'kmeans' or 'dbscan'
+        - outlier_method: str, 'isolation_forest', 'zscore', or 'dbscan'
+        - normalization_method: str, 'standard', 'robust', or 'minmax'
         """
         self.weights = weights
         self.n_clusters = n_clusters
         self.clustering_method = clustering_method
-        self.scaler = StandardScaler()
-        self.imputer = SimpleImputer(strategy='mean')
+        self.outlier_method = outlier_method
+        self.normalization_method = normalization_method
+        
+        # Initialize components
+        if normalization_method == 'standard':
+            self.scaler = StandardScaler()
+        elif normalization_method == 'robust':
+            self.scaler = RobustScaler()
+        else:
+            self.scaler = StandardScaler()  # fallback
+            
+        self.imputer = SimpleImputer(strategy='median')  # More robust for outliers
         self.model = None
         self.feature_names = None
+        self.outlier_labels = None
         
+    def normalize_data(self, data):
+        """Normalize data based on selected method"""
+        if self.normalization_method == 'minmax':
+            # Manual MinMax scaling
+            normalized_data = (data - data.min()) / (data.max() - data.min())
+            return normalized_data
+        else:
+            # Use sklearn scalers
+            return pd.DataFrame(
+                self.scaler.fit_transform(data),
+                columns=data.columns,
+                index=data.index
+            )
+    
+    def detect_outliers(self, data):
+        """Detect outliers and return outlier labels"""
+        outlier_mask = np.zeros(len(data), dtype=bool)
+        
+        if self.outlier_method == 'isolation_forest':
+            iso_forest = IsolationForest(contamination=0.1, random_state=42)
+            outlier_labels = iso_forest.fit_predict(data)
+            outlier_mask = outlier_labels == -1
+            
+        elif self.outlier_method == 'zscore':
+            # Use Z-score method
+            z_scores = np.abs(stats.zscore(data, nan_policy='omit'))
+            outlier_mask = (z_scores > 3).any(axis=1)
+            
+        elif self.outlier_method == 'dbscan':
+            # Use DBSCAN for outlier detection
+            dbscan = DBSCAN(eps=0.5, min_samples=5)
+            clusters = dbscan.fit_predict(data)
+            outlier_mask = clusters == -1
+            
+        print(f"Detected {outlier_mask.sum()} outliers using {self.outlier_method} method")
+        return outlier_mask
+    
     def preprocess_data(self, df):
         """
-        Preprocess the data: handle NaNs, scale, and apply weights
+        Preprocess the data: handle NaNs, normalize, and apply weights
         """
         # Separate string column and numerical data
         self.string_column = df.iloc[:, 0]
-        numerical_data = df.iloc[:, 1:]
+        self.original_index = df.index
+        numerical_data = df.iloc[:, 1:].copy()
         self.feature_names = numerical_data.columns.tolist()
+        
+        print("Original data statistics:")
+        print(numerical_data.describe())
         
         # Handle missing values
         numerical_data_imputed = pd.DataFrame(
             self.imputer.fit_transform(numerical_data),
-            columns=self.feature_names
+            columns=self.feature_names,
+            index=self.original_index
         )
+        
+        # Normalize data
+        numerical_data_normalized = self.normalize_data(numerical_data_imputed)
+        
+        print("\nNormalized data statistics:")
+        print(numerical_data_normalized.describe())
         
         # Apply feature weights if provided
         if self.weights:
+            weighted_data = numerical_data_normalized.copy()
             if isinstance(self.weights, dict):
                 # Apply weights from dictionary {feature_name: weight}
                 for feature, weight in self.weights.items():
-                    if feature in numerical_data_imputed.columns:
-                        numerical_data_imputed[feature] *= weight
+                    if feature in weighted_data.columns:
+                        weighted_data[feature] *= weight
+                        print(f"Applied weight {weight} to feature {feature}")
             elif isinstance(self.weights, list):
                 # Apply weights from list (assuming same order as columns)
                 if len(self.weights) == len(self.feature_names):
                     for i, weight in enumerate(self.weights):
-                        numerical_data_imputed.iloc[:, i] *= weight
+                        weighted_data.iloc[:, i] *= weight
+                        print(f"Applied weight {weight} to feature {self.feature_names[i]}")
+            
+            return weighted_data
         
-        # Scale the data
-        scaled_data = self.scaler.fit_transform(numerical_data_imputed)
-        
-        return pd.DataFrame(scaled_data, columns=self.feature_names)
+        return numerical_data_normalized
     
     def find_optimal_clusters(self, data, max_k=10):
-        """
-        Find optimal number of clusters using elbow method and silhouette score
-        """
+        """Find optimal number of clusters using multiple methods"""
         wcss = []  # Within-cluster sum of squares
         silhouette_scores = []
         
@@ -79,97 +143,209 @@ class UnsupervisedClustering:
             else:
                 silhouette_scores.append(0)
         
-        # Plot elbow curve and silhouette scores
-        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 5))
+        # Find optimal k using elbow method and silhouette score
+        optimal_k_elbow = self._find_elbow_point(wcss) + 2
+        optimal_k_silhouette = np.argmax(silhouette_scores) + 2
         
-        # Elbow curve
-        ax1.plot(range(2, max_k + 1), wcss, 'bo-')
-        ax1.set_xlabel('Number of Clusters')
-        ax1.set_ylabel('WCSS')
-        ax1.set_title('Elbow Method')
-        ax1.grid(True)
+        # Plot results
+        self._plot_optimization_results(range(2, max_k + 1), wcss, silhouette_scores)
         
-        # Silhouette scores
-        ax2.plot(range(2, max_k + 1), silhouette_scores, 'ro-')
-        ax2.set_xlabel('Number of Clusters')
-        ax2.set_ylabel('Silhouette Score')
-        ax2.set_title('Silhouette Scores')
-        ax2.grid(True)
-        
-        plt.tight_layout()
-        plt.show()
-        
-        # Find optimal k (you can modify this logic)
-        optimal_k = np.argmax(silhouette_scores) + 2  # +2 because range starts from 2
+        # Choose the best k (prefer silhouette score)
+        optimal_k = optimal_k_silhouette
         print(f"Suggested optimal number of clusters: {optimal_k}")
         
         return optimal_k
     
+    def _find_elbow_point(self, wcss):
+        """Find the elbow point in WCSS curve"""
+        n = len(wcss)
+        if n < 3:
+            return 0
+        
+        # Calculate angles between consecutive segments
+        angles = []
+        for i in range(1, n-1):
+            v1 = np.array([1, wcss[i-1] - wcss[i]])
+            v2 = np.array([1, wcss[i+1] - wcss[i]])
+            cosine = np.dot(v1, v2) / (np.linalg.norm(v1) * np.linalg.norm(v2))
+            angle = np.arccos(np.clip(cosine, -1, 1))
+            angles.append(angle)
+        
+        return np.argmax(angles)
+    
+    def _plot_optimization_results(self, k_range, wcss, silhouette_scores):
+        """Plot optimization results"""
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 5))
+        
+        # Elbow curve
+        ax1.plot(k_range, wcss, 'bo-', linewidth=2, markersize=8)
+        ax1.set_xlabel('Number of Clusters')
+        ax1.set_ylabel('Within-Cluster Sum of Squares (WCSS)')
+        ax1.set_title('Elbow Method for Optimal Clusters')
+        ax1.grid(True, alpha=0.3)
+        
+        # Silhouette scores
+        ax2.plot(k_range, silhouette_scores, 'ro-', linewidth=2, markersize=8)
+        ax2.set_xlabel('Number of Clusters')
+        ax2.set_ylabel('Silhouette Score')
+        ax2.set_title('Silhouette Analysis for Optimal Clusters')
+        ax2.grid(True, alpha=0.3)
+        
+        plt.tight_layout()
+        plt.show()
+    
     def fit_predict(self, df, auto_optimize=False):
-        """
-        Perform clustering on the data
-        """
+        """Perform clustering with outlier detection"""
         # Preprocess data
         processed_data = self.preprocess_data(df)
         
-        # Find optimal clusters if auto_optimize is True
-        if auto_optimize:
-            self.n_clusters = self.find_optimal_clusters(processed_data)
+        # Detect outliers
+        outlier_mask = self.detect_outliers(processed_data)
         
-        # Initialize and fit clustering model
-        if self.clustering_method == 'kmeans':
-            self.model = KMeans(n_clusters=self.n_clusters, random_state=42, n_init=10)
-        elif self.clustering_method == 'dbscan':
-            self.model = DBSCAN(eps=0.5, min_samples=5)
+        # Separate outliers from main data
+        main_data = processed_data[~outlier_mask]
+        outlier_data = processed_data[outlier_mask]
+        
+        print(f"\nMain data points: {len(main_data)}")
+        print(f"Outlier data points: {len(outlier_data)}")
+        
+        # Find optimal clusters if auto_optimize is True and we have enough data
+        if auto_optimize and len(main_data) > 10:
+            self.n_clusters = self.find_optimal_clusters(main_data)
+        
+        # Initialize and fit clustering model on main data
+        if len(main_data) > 0:
+            if self.clustering_method == 'kmeans':
+                self.model = KMeans(n_clusters=self.n_clusters, random_state=42, n_init=10)
+            elif self.clustering_method == 'dbscan':
+                self.model = DBSCAN(eps=0.5, min_samples=5)
+            else:
+                raise ValueError("Unsupported clustering method. Use 'kmeans' or 'dbscan'")
+            
+            # Fit and predict on main data
+            main_clusters = self.model.fit_predict(main_data)
+            
+            # Combine results: assign -1 to outliers, adjust main clusters to start from 0
+            final_clusters = np.full(len(df), -1, dtype=int)
+            final_clusters[main_data.index] = main_clusters
+            final_clusters[outlier_data.index] = -1  # Outliers labeled as -1
+            
         else:
-            raise ValueError("Unsupported clustering method. Use 'kmeans' or 'dbscan'")
+            # If no main data, all are outliers
+            final_clusters = np.full(len(df), -1, dtype=int)
         
-        # Fit and predict
-        clusters = self.model.fit_predict(processed_data)
-        
-        return clusters
+        return final_clusters
     
     def visualize_clusters(self, df, clusters):
-        """
-        Create various visualizations for the clusters
-        """
+        """Create comprehensive visualizations for the clusters"""
         processed_data = self.preprocess_data(df)
         
-        # Reduce dimensions for 2D visualization
-        pca = PCA(n_components=2)
-        reduced_data = pca.fit_transform(processed_data)
-        
         # Create subplots
-        fig, axes = plt.subplots(2, 2, figsize=(15, 12))
+        fig = plt.figure(figsize=(20, 15))
         
-        # 1. PCA scatter plot
-        scatter = axes[0, 0].scatter(reduced_data[:, 0], reduced_data[:, 1], 
-                                    c=clusters, cmap='viridis', alpha=0.7)
-        axes[0, 0].set_xlabel('PCA Component 1')
-        axes[0, 0].set_ylabel('PCA Component 2')
-        axes[0, 0].set_title('Cluster Visualization (PCA)')
-        plt.colorbar(scatter, ax=axes[0, 0])
+        # 1. PCA scatter plot (main plot)
+        ax1 = plt.subplot2grid((3, 3), (0, 0), colspan=2, rowspan=2)
+        self._create_pca_plot(ax1, processed_data, clusters)
         
         # 2. Cluster distribution
+        ax2 = plt.subplot2grid((3, 3), (0, 2))
+        self._create_cluster_distribution(ax2, clusters)
+        
+        # 3. Feature importance
+        ax3 = plt.subplot2grid((3, 3), (1, 2))
+        self._create_feature_importance(ax3, processed_data)
+        
+        # 4. Outlier analysis
+        ax4 = plt.subplot2grid((3, 3), (2, 0))
+        self._create_outlier_analysis(ax4, processed_data, clusters)
+        
+        # 5. Feature distribution by cluster
+        ax5 = plt.subplot2grid((3, 3), (2, 1), colspan=2)
+        self._create_feature_distribution(ax5, df, clusters)
+        
+        plt.tight_layout()
+        plt.show()
+        
+        # Print detailed cluster statistics
+        self._print_cluster_statistics(df, clusters)
+    
+    def _create_pca_plot(self, ax, data, clusters):
+        """Create PCA scatter plot"""
+        pca = PCA(n_components=2)
+        reduced_data = pca.fit_transform(data)
+        
+        # Create scatter plot with different colors for outliers
+        unique_clusters = np.unique(clusters)
+        colors = plt.cm.viridis(np.linspace(0, 1, len(unique_clusters)))
+        
+        for i, cluster in enumerate(unique_clusters):
+            mask = clusters == cluster
+            if cluster == -1:
+                # Outliers in red
+                ax.scatter(reduced_data[mask, 0], reduced_data[mask, 1], 
+                          c='red', label='Outliers', s=100, alpha=0.7, marker='X')
+            else:
+                ax.scatter(reduced_data[mask, 0], reduced_data[mask, 1], 
+                          c=[colors[i]], label=f'Cluster {cluster}', s=80, alpha=0.7)
+        
+        ax.set_xlabel(f'PC1 ({pca.explained_variance_ratio_[0]:.2%} variance)')
+        ax.set_ylabel(f'PC2 ({pca.explained_variance_ratio_[1]:.2%} variance)')
+        ax.set_title('Cluster Visualization (PCA)')
+        ax.legend()
+        ax.grid(True, alpha=0.3)
+    
+    def _create_cluster_distribution(self, ax, clusters):
+        """Create cluster distribution bar chart"""
         unique_clusters, cluster_counts = np.unique(clusters, return_counts=True)
-        axes[0, 1].bar(unique_clusters, cluster_counts, color='lightblue')
-        axes[0, 1].set_xlabel('Cluster')
-        axes[0, 1].set_ylabel('Number of Points')
-        axes[0, 1].set_title('Cluster Distribution')
+        colors = ['red' if cluster == -1 else 'lightblue' for cluster in unique_clusters]
         
-        # 3. Feature importance (based on PCA)
+        bars = ax.bar(unique_clusters, cluster_counts, color=colors, alpha=0.7)
+        ax.set_xlabel('Cluster')
+        ax.set_ylabel('Number of Points')
+        ax.set_title('Cluster Distribution')
+        
+        # Add value labels on bars
+        for bar, count in zip(bars, cluster_counts):
+            ax.text(bar.get_x() + bar.get_width()/2, bar.get_height(), 
+                   f'{count}', ha='center', va='bottom')
+    
+    def _create_feature_importance(self, ax, data):
+        """Create feature importance plot"""
+        pca = PCA(n_components=1)
+        pca.fit(data)
         feature_importance = np.abs(pca.components_[0])
-        features = self.feature_names
-        axes[1, 0].barh(features, feature_importance)
-        axes[1, 0].set_xlabel('Feature Importance (PCA Component 1)')
-        axes[1, 0].set_title('Feature Importance in Clustering')
         
-        # 4. Boxplot of features by cluster (first 4 features)
+        ax.barh(self.feature_names, feature_importance, color='orange', alpha=0.7)
+        ax.set_xlabel('Feature Importance (PCA Component 1)')
+        ax.set_title('Feature Importance in Clustering')
+    
+    def _create_outlier_analysis(self, ax, data, clusters):
+        """Create outlier analysis plot"""
+        outlier_mask = clusters == -1
+        normal_data = data[~outlier_mask]
+        outlier_data = data[outlier_mask]
+        
+        # Plot first two features
+        if len(data.columns) >= 2:
+            ax.scatter(normal_data.iloc[:, 0], normal_data.iloc[:, 1], 
+                      c='blue', label='Normal', alpha=0.6, s=60)
+            if len(outlier_data) > 0:
+                ax.scatter(outlier_data.iloc[:, 0], outlier_data.iloc[:, 1], 
+                          c='red', label='Outliers', alpha=0.8, s=100, marker='X')
+            
+            ax.set_xlabel(data.columns[0])
+            ax.set_ylabel(data.columns[1])
+            ax.set_title('Outlier Detection\n(First Two Features)')
+            ax.legend()
+            ax.grid(True, alpha=0.3)
+    
+    def _create_feature_distribution(self, ax, df, clusters):
+        """Create feature distribution by cluster"""
         df_with_clusters = df.copy()
         df_with_clusters['cluster'] = clusters
         
-        # Select first 4 numerical features for boxplot
-        num_features = min(4, len(self.feature_names))
+        # Select first 3 numerical features for boxplot
+        num_features = min(3, len(self.feature_names))
         feature_subset = self.feature_names[:num_features]
         
         if num_features > 0:
@@ -178,84 +354,111 @@ class UnsupervisedClustering:
                                             var_name='feature', 
                                             value_name='value')
             
-            sns.boxplot(data=df_melted, x='cluster', y='value', hue='feature', ax=axes[1, 1])
-            axes[1, 1].set_title('Feature Distribution by Cluster')
-            axes[1, 1].legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+            sns.boxplot(data=df_melted, x='cluster', y='value', hue='feature', ax=ax)
+            ax.set_title('Feature Distribution by Cluster')
+            ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+    
+    def _print_cluster_statistics(self, df, clusters):
+        """Print detailed cluster statistics"""
+        print("\n" + "="*50)
+        print("CLUSTER STATISTICS")
+        print("="*50)
         
-        plt.tight_layout()
-        plt.show()
+        unique_clusters = np.unique(clusters)
         
-        # Print cluster statistics
-        print("\nCluster Statistics:")
-        print("===================")
         for cluster in unique_clusters:
-            cluster_size = np.sum(clusters == cluster)
-            print(f"Cluster {cluster}: {cluster_size} points ({cluster_size/len(clusters)*100:.1f}%)")
+            cluster_mask = clusters == cluster
+            cluster_size = np.sum(cluster_mask)
+            percentage = (cluster_size / len(clusters)) * 100
+            
+            if cluster == -1:
+                print(f"\n📊 OUTLIERS (Cluster -1):")
+            else:
+                print(f"\n📊 CLUSTER {cluster}:")
+            
+            print(f"   Size: {cluster_size} points ({percentage:.1f}%)")
+            
+            if cluster_size > 0:
+                cluster_data = df.iloc[cluster_mask, 1:]  # Numerical data only
+                print(f"   Feature means:")
+                for feature in cluster_data.columns[:3]:  # Show first 3 features
+                    mean_val = cluster_data[feature].mean()
+                    print(f"     {feature}: {mean_val:.2f}")
 
 def create_sample_data():
-    """
-    Create sample data for testing
-    """
+    """Create sample data with outliers and different scales"""
     np.random.seed(42)
+    n_samples = 150
     
     data = {
-        'name': [f'Item_{i}' for i in range(100)],
-        'feature1': np.random.normal(50, 15, 100),
-        'feature2': np.random.normal(100, 25, 100),
-        'feature3': np.random.normal(200, 40, 100),
-        'feature4': np.random.normal(150, 30, 100)
+        'item_id': [f'ITEM_{i:03d}' for i in range(n_samples)],
+        'sales_volume': np.random.normal(1000, 200, n_samples),  # Large scale
+        'profit_margin': np.random.normal(0.15, 0.05, n_samples),  # Small scale
+        'customer_rating': np.random.normal(4.2, 0.3, n_samples),  # Different range
+        'operating_costs': np.random.normal(50000, 10000, n_samples),  # Very large scale
     }
     
     df = pd.DataFrame(data)
     
-    # Introduce some NaN values (10% of data)
-    mask = np.random.random(df.iloc[:, 1:].shape) < 0.1
+    # Introduce some NaN values (8% of data)
+    mask = np.random.random(df.iloc[:, 1:].shape) < 0.08
     df.iloc[:, 1:][mask] = np.nan
     
-    # Create some clusters by modifying the data
-    df.iloc[0:33, 1] += 20  # Cluster 0
-    df.iloc[33:66, 2] -= 30  # Cluster 1
-    df.iloc[66:100, 3] += 50  # Cluster 2
+    # Create clear clusters
+    df.iloc[0:50, 1] += 300   # High sales cluster
+    df.iloc[50:100, 2] += 0.1 # High margin cluster  
+    df.iloc[100:150, 3] -= 0.4 # Low rating cluster
+    
+    # Add some outliers
+    outlier_indices = [5, 25, 75, 115, 140]
+    for idx in outlier_indices:
+        df.iloc[idx, 1] *= 3    # Extreme sales
+        df.iloc[idx, 2] *= 2    # Extreme margin
+        df.iloc[idx, 4] *= 1.5  # Extreme costs
     
     return df
 
 def main():
-    """
-    Main function to demonstrate the clustering pipeline
-    """
+    """Main function to demonstrate the advanced clustering pipeline"""
+    print("🚀 Advanced Unsupervised Clustering with Outlier Detection")
+    print("="*60)
+    
     # Create or load your dataset
-    print("Loading data...")
+    print("\n📊 Loading data...")
     # df = pd.read_csv('your_data.csv')  # Uncomment to load your own data
     df = create_sample_data()  # Using sample data for demonstration
     
     print(f"Dataset shape: {df.shape}")
-    print(f"Missing values per column:")
+    print(f"\nMissing values per column:")
     print(df.isnull().sum())
     
     # Configuration
-    FEATURE_WEIGHTS = {
-        'feature1': 2.0,  # Give more weight to feature1
-        'feature2': 1.0,
-        'feature3': 0.5,  # Give less weight to feature3
-        'feature4': 1.0
+    CONFIG = {
+        'weights': {
+            'sales_volume': 1.5,    # Higher weight to sales
+            'profit_margin': 2.0,   # Highest weight to profit margin
+            'customer_rating': 1.0, # Standard weight
+            'operating_costs': 0.5  # Lower weight to costs
+        },
+        'n_clusters': 4,
+        'clustering_method': 'kmeans',
+        'outlier_method': 'isolation_forest',  # 'isolation_forest', 'zscore', 'dbscan'
+        'normalization_method': 'robust'  # 'standard', 'robust', 'minmax'
     }
     
-    # Alternative: Use list of weights (in same order as columns)
-    # FEATURE_WEIGHTS = [2.0, 1.0, 0.5, 1.0]
+    print(f"\n⚙️  Configuration:")
+    for key, value in CONFIG.items():
+        print(f"   {key}: {value}")
     
     # Initialize clustering model
-    clustering = UnsupervisedClustering(
-        weights=FEATURE_WEIGHTS,
-        n_clusters=3,
-        clustering_method='kmeans'  # or 'dbscan'
-    )
+    clustering = AdvancedUnsupervisedClustering(**CONFIG)
     
     # Perform clustering
-    print("\nPerforming clustering...")
+    print(f"\n🔍 Performing clustering with outlier detection...")
     clusters = clustering.fit_predict(df, auto_optimize=True)
     
     # Visualize results
-    print("\nGenerating visualizations...")
+    print(f"\n📈 Generating comprehensive visualizations...")
     clustering.visualize_clusters(df, clusters)
     
     # Add clusters to original dataframe
@@ -263,19 +466,26 @@ def main():
     df_with_clusters['cluster'] = clusters
     
     # Save results
-    output_filename = 'clustered_data.csv'
+    output_filename = 'clustered_data_with_outliers.csv'
     df_with_clusters.to_csv(output_filename, index=False)
-    print(f"\nResults saved to {output_filename}")
+    print(f"\n💾 Results saved to '{output_filename}'")
     
     # Display sample of results
-    print("\nSample of clustered data:")
+    print(f"\n📋 Sample of clustered data (first 10 rows):")
     print(df_with_clusters.head(10))
     
-    # Print cluster summary
-    print(f"\nClustering completed successfully!")
-    print(f"Number of clusters found: {len(np.unique(clusters))}")
-    print(f"Cluster distribution:")
-    print(df_with_clusters['cluster'].value_counts().sort_index())
+    # Final summary
+    print(f"\n✅ Clustering completed successfully!")
+    print(f"   Total data points: {len(df)}")
+    print(f"   Clusters found: {len(np.unique(clusters))} (including outliers as cluster -1)")
+    
+    cluster_counts = df_with_clusters['cluster'].value_counts().sort_index()
+    for cluster, count in cluster_counts.items():
+        percentage = (count / len(df)) * 100
+        if cluster == -1:
+            print(f"   📛 Outliers: {count} points ({percentage:.1f}%)")
+        else:
+            print(f"   🔷 Cluster {cluster}: {count} points ({percentage:.1f}%)")
 
 if __name__ == "__main__":
     main()
