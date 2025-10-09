@@ -144,16 +144,15 @@ class AdvancedUnsupervisedClustering:
                 silhouette_scores.append(0)
         
         # Find optimal k using elbow method and silhouette score
-        optimal_k_elbow = self._find_elbow_point(wcss) + 2
+        # optimal_k_elbow = self._find_elbow_point(wcss) + 2
         optimal_k_silhouette = np.argmax(silhouette_scores) + 2
         
         # Plot results
-        self._plot_optimization_results(range(2, max_k + 1), wcss, silhouette_scores)
+        # self._plot_optimization_results(range(2, max_k + 1), wcss, silhouette_scores)
         
         # Choose the best k (prefer silhouette score)
         optimal_k = optimal_k_silhouette
         print(f"Suggested optimal number of clusters: {optimal_k}")
-        
         return optimal_k
     
     def _find_elbow_point(self, wcss):
@@ -385,65 +384,46 @@ class AdvancedUnsupervisedClustering:
                     mean_val = cluster_data[feature].mean()
                     print(f"     {feature}: {mean_val:.2f}")
 
-def create_sample_data():
-    """Create sample data with outliers and different scales"""
-    np.random.seed(42)
-    n_samples = 150
-    
-    data = {
-        'item_id': [f'ITEM_{i:03d}' for i in range(n_samples)],
-        'sales_volume': np.random.normal(1000, 200, n_samples),  # Large scale
-        'profit_margin': np.random.normal(0.15, 0.05, n_samples),  # Small scale
-        'customer_rating': np.random.normal(4.2, 0.3, n_samples),  # Different range
-        'operating_costs': np.random.normal(50000, 10000, n_samples),  # Very large scale
-    }
-    
-    df = pd.DataFrame(data)
-    
-    # Introduce some NaN values (8% of data)
-    mask = np.random.random(df.iloc[:, 1:].shape) < 0.08
-    df.iloc[:, 1:][mask] = np.nan
-    
-    # Create clear clusters
-    df.iloc[0:50, 1] += 300   # High sales cluster
-    df.iloc[50:100, 2] += 0.1 # High margin cluster  
-    df.iloc[100:150, 3] -= 0.4 # Low rating cluster
-    
-    # Add some outliers
-    outlier_indices = [5, 25, 75, 115, 140]
-    for idx in outlier_indices:
-        df.iloc[idx, 1] *= 3    # Extreme sales
-        df.iloc[idx, 2] *= 2    # Extreme margin
-        df.iloc[idx, 4] *= 1.5  # Extreme costs
-    
-    return df
 
 def main():
-    """Main function to demonstrate the advanced clustering pipeline"""
-    print("🚀 Advanced Unsupervised Clustering with Outlier Detection")
+    print("Advanced Unsupervised Clustering with Outlier Detection")
     print("="*60)
-    
     # Create or load your dataset
-    print("\n📊 Loading data...")
-    # df = pd.read_csv('your_data.csv')  # Uncomment to load your own data
-    df = create_sample_data()  # Using sample data for demonstration
-    
+    print("\nLoading data...")
+    df = pd.read_csv('./report/prometheus_data_profile_metric_profiles.csv')  #
     print(f"Dataset shape: {df.shape}")
     print(f"\nMissing values per column:")
     print(df.isnull().sum())
     
+    FEATURE_WEIGHT = {
+        "metric_name": 0.0,
+        "min": 0.0,
+        "max": 2.0,
+        "mean": 0.0,
+        "median": 0.0,
+        "std_dev": 3.0,
+        "skewness": 0.0,
+        "kurtosis": 0.0,
+        "p05": 1.0,
+        "p25": 7.0,
+        "p75": 7.0,
+        "p95": 4.0,
+        "iqr": 0.0,
+        "null_count": 1.0,
+        "nul_percentage": 0.0,
+        "non_zero_records": 0.0,
+        "zero_count": 2.0,
+        "zero_percentage": 0.0,
+        "total_records": 0.0
+    }
+
     # Configuration
     CONFIG = {
-        'weights': {
-            'sales_volume': 1.5,    # Higher weight to sales
-            'profit_margin': 2.0,   # Highest weight to profit margin
-            'customer_rating': 1.0, # Standard weight
-            'operating_costs': 0.5  # Lower weight to costs
-        },
-        'n_clusters': 4,
-        'clustering_method': 'kmeans',
+        'weights': FEATURE_WEIGHT,
+        'n_clusters': 3,
+        'clustering_method': 'kmeans', # or dbscan
         'outlier_method': 'isolation_forest',  # 'isolation_forest', 'zscore', 'dbscan'
-        'normalization_method': 'robust'  # 'standard', 'robust', 'minmax'
+        'normalization_method': 'standard'  # 'standard', 'robust', 'minmax'
     }
     
     print(f"\n⚙️  Configuration:")
@@ -457,10 +437,6 @@ def main():
     print(f"\n🔍 Performing clustering with outlier detection...")
     clusters = clustering.fit_predict(df, auto_optimize=True)
     
-    # Visualize results
-    print(f"\n📈 Generating comprehensive visualizations...")
-    clustering.visualize_clusters(df, clusters)
-    
     # Add clusters to original dataframe
     df_with_clusters = df.copy()
     df_with_clusters['cluster'] = clusters
@@ -472,7 +448,7 @@ def main():
     
     # Display sample of results
     print(f"\n📋 Sample of clustered data (first 10 rows):")
-    print(df_with_clusters.head(10))
+    print(df.loc[(df_with_clusters["p25"] > 0.5)].head(10))
     
     # Final summary
     print(f"\n✅ Clustering completed successfully!")

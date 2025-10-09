@@ -1,6 +1,7 @@
 import pandas as pd
 import numpy as np
 import warnings
+from generate_sample_data import generate_sample_prometheus_data
 warnings.filterwarnings('ignore')
 
 class PrometheusDataProfiler:
@@ -35,7 +36,6 @@ class PrometheusDataProfiler:
             
             # Set timestamp as index
             self.df.set_index(timestamp_col, inplace=True)
-            
             # Identify numeric columns (excluding timestamp)
             self.numeric_columns = self.df.select_dtypes(include=[np.number]).columns.tolist()
             
@@ -78,22 +78,24 @@ class PrometheusDataProfiler:
             
         profile = {
             'metric_name': metric_name,
-            'total_records': len(series),
-            'non_zero_records': len(non_zero_series),
-            'zero_count': len(series) - len(non_zero_series),
-            'zero_percentage': ((len(series) - len(non_zero_series)) / len(series)) * 100,
             'mean': non_zero_series.mean(),
             'median': non_zero_series.median(),
             'std_dev': non_zero_series.std(),
-            'min': non_zero_series.min(),
-            'max': non_zero_series.max(),
-            'q1': non_zero_series.quantile(0.25),
-            'q3': non_zero_series.quantile(0.75),
-            'iqr': non_zero_series.quantile(0.75) - non_zero_series.quantile(0.25),
             'skewness': non_zero_series.skew(),
             'kurtosis': non_zero_series.kurtosis(),
+            'min': non_zero_series.min(),
+            'max': non_zero_series.max(),
+            'p05': np.percentile(non_zero_series, 5, method="linear"),
+            'p25': np.percentile(non_zero_series, 25, method="linear"),
+            'p75': np.percentile(non_zero_series, 75, method="linear"),
+            'p95': np.percentile(non_zero_series, 95, method="linear"),
+            'iqr': non_zero_series.quantile(0.75) - non_zero_series.quantile(0.25),
             'null_count': self.df[metric_name].isnull().sum(),
-            'null_percentage': (self.df[metric_name].isnull().sum() / len(self.df)) * 100
+            'null_percentage': (self.df[metric_name].isnull().sum() / len(self.df)) * 100,
+            'non_zero_records': len(non_zero_series),
+            'zero_count': len(series) - len(non_zero_series),
+            'zero_percentage': ((len(series) - len(non_zero_series)) / len(series)) * 100,
+            'total_records': len(series)
         }
         
         return profile
@@ -197,37 +199,38 @@ class PrometheusDataProfiler:
         """
         Print a summary of the report to console
         """
-        print("\n" + "="*80)
-        print("PROMETHEUS DATA PROFILING REPORT SUMMARY")
-        print("="*80)
+        # print("\n" + "="*80)
+        # print("PROMETHEUS DATA PROFILING REPORT SUMMARY")
+        # print("="*80)
         
-        overview = report['overview']
-        summary = report['summary_statistics']
+        # overview = report['overview']
+        # summary = report['summary_statistics']
         
-        print(f"\nOVERVIEW:")
-        print(f"  Time Range: {overview['data_range']['start']} to {overview['data_range']['end']}")
-        print(f"  Total Timestamps: {overview['total_timestamps']:,}")
-        print(f"  Time Span: {overview['time_span_days']} days")
-        print(f"  Metrics Analyzed: {overview['total_metrics']}")
+        # print(f"\nOVERVIEW:")
+        # print(f"  Time Range: {overview['data_range']['start']} to {overview['data_range']['end']}")
+        # print(f"  Total Timestamps: {overview['total_timestamps']:,}")
+        # print(f"  Time Span: {overview['time_span_days']} days")
+        # print(f"  Metrics Analyzed: {overview['total_metrics']}")
         
-        print(f"\nSUMMARY STATISTICS:")
-        print(f"  Metrics with zero values: {summary['metrics_with_zeros']}/{summary['total_metrics_analyzed']}")
-        print(f"  Average zero percentage: {summary['avg_zero_percentage']:.2f}%")
-        print(f"  Average null percentage: {summary['avg_null_percentage']:.2f}%")
+        # print(f"\nSUMMARY STATISTICS:")
+        # print(f"  Metrics with zero values: {summary['metrics_with_zeros']}/{summary['total_metrics_analyzed']}")
+        # print(f"  Average zero percentage: {summary['avg_zero_percentage']:.2f}%")
+        # print(f"  Average null percentage: {summary['avg_null_percentage']:.2f}%")
         
-        print(f"\nTOP METRICS BY ZERO PERCENTAGE:")
-        profiles_sorted = sorted(report['metric_profiles'], 
-                               key=lambda x: x['zero_percentage'], 
-                               reverse=True)[:5]
+        # print(f"\nTOP METRICS BY ZERO PERCENTAGE:")
+        # profiles_sorted = sorted(report['metric_profiles'], 
+        #                        key=lambda x: x['zero_percentage'], 
+        #                        reverse=True)[:5]
         
-        for profile in profiles_sorted:
-            print(f"  {profile['metric_name']}: {profile['zero_percentage']:.2f}% zeros "
-                  f"({profile['zero_count']:,} out of {profile['total_records']:,})")
+        # for profile in profiles_sorted:
+        #     print(f"  {profile['metric_name']}: {profile['zero_percentage']:.2f}% zeros "
+        #           f"({profile['zero_count']:,} out of {profile['total_records']:,})")
 
 
 if __name__ == "__main__":
     # Generate sample data (comment out if using real data)
-    csv_file = generate_sample_prometheus_data()
+    # csv_file = generate_sample_prometheus_data()
+    csv_file = "file-name.csv"
     
     # Initialize profiler
     profiler = PrometheusDataProfiler(csv_file)
@@ -249,6 +252,27 @@ if __name__ == "__main__":
         print("REPORT GENERATION COMPLETED SUCCESSFULLY!")
         print("="*80)
         
+        df = pd.read_csv("prometheus_data_profile_metric_profiles.csv")
+        sorted_column = "p25"
+        threshold_sec = 0.5
+
+        filtered_report = df.loc[df[sorted_column] >= threshold_sec]
+        sorted_report = filtered_report.sort_values(by[sorted_column], ascending=False)
+        print(sorted_report)
+        sorted_report.to_csv("z_filtered_metric_profile.csv", index=False)
+
+        affected_microflows = set()
+        for row in sorted_report.metric_name.values:
+            category = row.split(".")[0]
+            affected_microflows.add(category)
+
+        print("\n" + "="*80)
+        print(f"AFFECTED MICROFLOWS FROM TOTAL {len(profiler.numeric_columns)} SORT BY {sorted_column}")
+        print("="*80)
+
+        for microflow in affected_microflows:
+            print(microflow)
+
     except Exception as e:
         print(f"Error during profiling: {e}")
     
