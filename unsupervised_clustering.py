@@ -1,12 +1,11 @@
-import numpy as np
 import pandas as pd
+import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
-from sklearn.preprocessing import StandardScaler, MinMaxScaler
+from sklearn.preprocessing import StandardScaler, LabelEncoder
 from sklearn.cluster import KMeans, DBSCAN, AgglomerativeClustering
 from sklearn.mixture import GaussianMixture
 from sklearn.metrics import silhouette_score, calinski_harabasz_score, davies_bouldin_score
-from sklearn.datasets import make_blobs, make_moons, make_circles
 from sklearn.decomposition import PCA
 from sklearn.manifold import TSNE
 import scipy.cluster.hierarchy as sch
@@ -14,120 +13,120 @@ from itertools import cycle
 import warnings
 warnings.filterwarnings('ignore')
 
-class UnsupervisedClustering:
-    def __init__(self, data=None, random_state=42):
+class MixedDataClustering:
+    def __init__(self, dataframe, string_column=0, random_state=42):
         """
-        Initialize the clustering analyzer
+        Initialize the clustering analyzer for mixed data types
         
         Args:
-            data: numpy array or pandas DataFrame
-            random_state: random seed for reproducibility
+            dataframe (pd.DataFrame): Input DataFrame with string and numerical columns
+            string_column (int or str): Index or name of the string column
+            random_state (int): Random seed for reproducibility
         """
-        self.data = data
-        self.original_data = data.copy() if data is not None else None
-        self.scaled_data = None
-        self.labels = None
+        self.original_df = dataframe.copy()
+        self.string_column = string_column
         self.random_state = random_state
-        self.results = {}
+        self.numerical_data = None
+        self.scaled_data = None
+        self.string_labels = None
+        self.cluster_results = {}
+        self.encoder = LabelEncoder()
         
-    def generate_sample_data(self, dataset_type='blobs', n_samples=300):
-        """
-        Generate sample datasets for demonstration
+        # Prepare data
+        self._prepare_data()
+    
+    def _prepare_data(self):
+        """Extract and prepare numerical data for clustering"""
+        # Identify string column
+        if isinstance(self.string_column, int):
+            string_col_name = self.original_df.columns[self.string_column]
+        else:
+            string_col_name = self.string_column
         
-        Args:
-            dataset_type: 'blobs', 'moons', 'circles', 'anisotropic'
-            n_samples: number of data points
-        """
-        np.random.seed(self.random_state)
+        # Store string labels
+        self.string_labels = self.original_df[string_col_name].copy()
         
-        if dataset_type == 'blobs':
-            self.data, true_labels = make_blobs(n_samples=n_samples, centers=3, 
-                                              cluster_std=0.8, random_state=self.random_state)
-            self.data = pd.DataFrame(self.data, columns=['Feature_1', 'Feature_2'])
-            
-        elif dataset_type == 'moons':
-            self.data, true_labels = make_moons(n_samples=n_samples, noise=0.1, 
-                                              random_state=self.random_state)
-            self.data = pd.DataFrame(self.data, columns=['Feature_1', 'Feature_2'])
-            
-        elif dataset_type == 'circles':
-            self.data, true_labels = make_circles(n_samples=n_samples, noise=0.05, 
-                                                factor=0.5, random_state=self.random_state)
-            self.data = pd.DataFrame(self.data, columns=['Feature_1', 'Feature_2'])
-            
-        elif dataset_type == 'anisotropic':
-            # Anisotropicly distributed data
-            X, true_labels = make_blobs(n_samples=n_samples, centers=3, 
-                                      random_state=self.random_state)
-            transformation = [[0.6, -0.6], [-0.4, 0.8]]
-            X = np.dot(X, transformation)
-            self.data = pd.DataFrame(X, columns=['Feature_1', 'Feature_2'])
-            
-        elif dataset_type == 'varied_variance':
-            # Clusters with different variance
-            self.data, true_labels = make_blobs(n_samples=n_samples, centers=3, 
-                                              cluster_std=[1.0, 2.5, 0.5],
-                                              random_state=self.random_state)
-            self.data = pd.DataFrame(self.data, columns=['Feature_1', 'Feature_2'])
+        # Extract numerical data (exclude string column)
+        self.numerical_data = self.original_df.drop(columns=[string_col_name])
         
-        self.original_data = self.data.copy()
-        print(f"Generated {dataset_type} dataset with {n_samples} samples")
-        return self.data
+        # Encode string column for some visualizations (optional)
+        self.encoded_labels = self.encoder.fit_transform(self.string_labels)
+        
+        print(f"Data prepared:")
+        print(f"  String column: '{string_col_name}' with {len(self.string_labels.unique())} unique values")
+        print(f"  Numerical columns: {list(self.numerical_data.columns)}")
+        print(f"  Total samples: {len(self.original_df)}")
     
     def preprocess_data(self, method='standard'):
         """
-        Preprocess the data for clustering
+        Preprocess numerical data for clustering
         
         Args:
-            method: 'standard' (StandardScaler) or 'minmax' (MinMaxScaler)
+            method (str): 'standard' (StandardScaler) or 'minmax' (MinMaxScaler)
         """
-        if self.data is None:
-            raise ValueError("No data provided. Load data first.")
-            
         if method == 'standard':
             scaler = StandardScaler()
         elif method == 'minmax':
             scaler = MinMaxScaler()
         else:
             raise ValueError("Method must be 'standard' or 'minmax'")
-            
-        self.scaled_data = scaler.fit_transform(self.data)
-        print(f"Data scaled using {method} scaling")
+        
+        self.scaled_data = scaler.fit_transform(self.numerical_data)
+        self.scaler = scaler
+        
+        print(f"Numerical data scaled using {method} scaling")
         return self.scaled_data
     
-    def find_optimal_k(self, max_k=10):
+    def find_optimal_clusters(self, max_k=10, algorithm='kmeans'):
         """
-        Find optimal number of clusters using Elbow method and Silhouette analysis
+        Find optimal number of clusters using multiple methods
         
         Args:
-            max_k: maximum number of clusters to test
+            max_k (int): Maximum number of clusters to test
+            algorithm (str): Clustering algorithm to use for evaluation
         """
         if self.scaled_data is None:
             self.preprocess_data()
-            
+        
         wcss = []  # Within-Cluster Sum of Squares
         silhouette_scores = []
-        
         k_range = range(2, max_k + 1)
         
         for k in k_range:
-            kmeans = KMeans(n_clusters=k, random_state=self.random_state)
-            labels = kmeans.fit_predict(self.scaled_data)
-            wcss.append(kmeans.inertia_)
+            if algorithm == 'kmeans':
+                model = KMeans(n_clusters=k, random_state=self.random_state)
+            elif algorithm == 'gmm':
+                model = GaussianMixture(n_components=k, random_state=self.random_state)
+            else:
+                raise ValueError("Algorithm must be 'kmeans' or 'gmm'")
             
-            if len(set(labels)) > 1:  # Silhouette score requires at least 2 clusters
+            labels = model.fit_predict(self.scaled_data)
+            wcss.append(model.inertia_ if algorithm == 'kmeans' else np.nan)
+            
+            if len(set(labels)) > 1:
                 silhouette_scores.append(silhouette_score(self.scaled_data, labels))
             else:
                 silhouette_scores.append(0)
         
-        # Plot Elbow method and Silhouette scores
+        # Plot results
         fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 5))
         
-        # Elbow curve
-        ax1.plot(k_range, wcss, 'bo-', linewidth=2, markersize=8)
-        ax1.set_xlabel('Number of Clusters (k)')
-        ax1.set_ylabel('Within-Cluster Sum of Squares (WCSS)')
-        ax1.set_title('Elbow Method for Optimal k')
+        # Elbow curve (only for K-means)
+        if algorithm == 'kmeans':
+            ax1.plot(k_range, wcss, 'bo-', linewidth=2, markersize=8)
+            ax1.set_xlabel('Number of Clusters (k)')
+            ax1.set_ylabel('Within-Cluster Sum of Squares (WCSS)')
+            ax1.set_title('Elbow Method for Optimal k')
+            optimal_k_elbow = self._find_elbow_point(k_range, wcss)
+            ax1.axvline(x=optimal_k_elbow, color='red', linestyle='--', 
+                       label=f'Optimal k: {optimal_k_elbow}')
+        else:
+            ax1.text(0.5, 0.5, 'Elbow method only available for K-means', 
+                    ha='center', va='center', transform=ax1.transAxes)
+            ax1.set_title('Elbow Method (K-means only)')
+            optimal_k_elbow = None
+        
+        ax1.legend()
         ax1.grid(True, alpha=0.3)
         
         # Silhouette scores
@@ -135,28 +134,29 @@ class UnsupervisedClustering:
         ax2.set_xlabel('Number of Clusters (k)')
         ax2.set_ylabel('Silhouette Score')
         ax2.set_title('Silhouette Analysis for Optimal k')
+        optimal_k_silhouette = k_range[np.argmax(silhouette_scores)]
+        ax2.axvline(x=optimal_k_silhouette, color='red', linestyle='--', 
+                   label=f'Optimal k: {optimal_k_silhouette}')
+        ax2.legend()
         ax2.grid(True, alpha=0.3)
         
         plt.tight_layout()
         plt.show()
         
-        # Find optimal k (elbow point and max silhouette)
-        optimal_k_elbow = self._find_elbow_point(k_range, wcss)
-        optimal_k_silhouette = k_range[np.argmax(silhouette_scores)]
-        
         print(f"Optimal k (Elbow method): {optimal_k_elbow}")
         print(f"Optimal k (Silhouette): {optimal_k_silhouette}")
         
         return {
-            'k_range': list(k_range),
-            'wcss': wcss,
-            'silhouette_scores': silhouette_scores,
             'optimal_k_elbow': optimal_k_elbow,
-            'optimal_k_silhouette': optimal_k_silhouette
+            'optimal_k_silhouette': optimal_k_silhouette,
+            'silhouette_scores': silhouette_scores
         }
     
     def _find_elbow_point(self, k_range, wcss):
         """Helper method to find elbow point in WCSS curve"""
+        if len(wcss) < 3:
+            return k_range[0]
+        
         # Calculate the angle between consecutive segments
         angles = []
         for i in range(1, len(wcss) - 1):
@@ -165,17 +165,16 @@ class UnsupervisedClustering:
             angle = np.arccos(np.dot(v1, v2) / (np.linalg.norm(v1) * np.linalg.norm(v2)))
             angles.append(angle)
         
-        return k_range[np.argmax(angles) + 1]
+        return k_range[np.argmax(angles) + 1] if angles else k_range[0]
     
     def apply_kmeans(self, n_clusters=3):
         """Apply K-means clustering"""
         kmeans = KMeans(n_clusters=n_clusters, random_state=self.random_state)
         labels = kmeans.fit_predict(self.scaled_data)
         
-        # Calculate metrics
         metrics = self._calculate_metrics(labels)
         
-        self.results['kmeans'] = {
+        self.cluster_results['kmeans'] = {
             'model': kmeans,
             'labels': labels,
             'metrics': metrics,
@@ -198,7 +197,7 @@ class UnsupervisedClustering:
         
         metrics = self._calculate_metrics(labels) if n_clusters > 1 else None
         
-        self.results['dbscan'] = {
+        self.cluster_results['dbscan'] = {
             'model': dbscan,
             'labels': labels,
             'metrics': metrics,
@@ -220,7 +219,7 @@ class UnsupervisedClustering:
         
         metrics = self._calculate_metrics(labels)
         
-        self.results['hierarchical'] = {
+        self.cluster_results['hierarchical'] = {
             'model': hierarchical,
             'labels': labels,
             'metrics': metrics,
@@ -241,7 +240,7 @@ class UnsupervisedClustering:
         
         metrics = self._calculate_metrics(labels)
         
-        self.results['gmm'] = {
+        self.cluster_results['gmm'] = {
             'model': gmm,
             'labels': labels,
             'probabilities': probabilities,
@@ -285,8 +284,8 @@ class UnsupervisedClustering:
         comparison_data = []
         for algo_name, result_key in zip(['K-means', 'Hierarchical', 'GMM'], 
                                        ['kmeans', 'hierarchical', 'gmm']):
-            if result_key in self.results and self.results[result_key]['metrics']:
-                metrics = self.results[result_key]['metrics']
+            if result_key in self.cluster_results and self.cluster_results[result_key]['metrics']:
+                metrics = self.cluster_results[result_key]['metrics']
                 comparison_data.append({
                     'Algorithm': algo_name,
                     'Silhouette': metrics['silhouette_score'],
@@ -300,139 +299,286 @@ class UnsupervisedClustering:
         
         return comparison_df
     
-    def visualize_clusters(self, algorithm_names=None, figsize=(15, 10)):
-        """Visualize clustering results"""
-        if algorithm_names is None:
-            algorithm_names = list(self.results.keys())
+    def visualize_clusters(self, algorithm_name='kmeans', figsize=(12, 8)):
+        """Visualize clustering results with multiple plot types"""
+        if algorithm_name not in self.cluster_results:
+            print(f"No results found for {algorithm_name}")
+            return
         
-        n_algorithms = len(algorithm_names)
-        n_cols = min(3, n_algorithms)
-        n_rows = (n_algorithms + n_cols - 1) // n_cols
+        result = self.cluster_results[algorithm_name]
+        labels = result['labels']
         
-        fig, axes = plt.subplots(n_rows, n_cols, figsize=figsize)
-        if n_algorithms == 1:
-            axes = np.array([axes])
-        axes = axes.flatten()
+        # Create subplots
+        fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=figsize)
         
-        # Color cycle for clusters
-        colors = cycle(plt.cm.tab10.colors)
+        # Plot 1: 2D PCA projection
+        pca = PCA(n_components=2, random_state=self.random_state)
+        pca_data = pca.fit_transform(self.scaled_data)
         
-        for idx, algo_name in enumerate(algorithm_names):
-            if algo_name not in self.results:
-                continue
+        unique_labels = set(labels)
+        colors = plt.cm.tab10(np.linspace(0, 1, len(unique_labels)))
+        
+        for i, label in enumerate(unique_labels):
+            if label == -1:  # Noise points
+                color = 'black'
+                marker = 'x'
+                label_text = 'Noise'
+            else:
+                color = colors[i]
+                marker = 'o'
+                label_text = f'Cluster {label}'
+            
+            mask = labels == label
+            ax1.scatter(pca_data[mask, 0], pca_data[mask, 1], 
+                       c=[color], marker=marker, label=label_text, alpha=0.7, s=50)
+        
+        ax1.set_xlabel(f'PC1 ({pca.explained_variance_ratio_[0]:.2%} variance)')
+        ax1.set_ylabel(f'PC2 ({pca.explained_variance_ratio_[1]:.2%} variance)')
+        ax1.set_title(f'{algorithm_name.upper()} - PCA Projection')
+        ax1.legend()
+        ax1.grid(True, alpha=0.3)
+        
+        # Plot 2: Cluster distribution by string labels
+        cluster_string_df = pd.DataFrame({
+            'String_Label': self.string_labels,
+            'Cluster': labels
+        })
+        
+        cluster_counts = cluster_string_df.groupby(['String_Label', 'Cluster']).size().unstack(fill_value=0)
+        cluster_counts.plot(kind='bar', stacked=True, ax=ax2, colormap='tab10')
+        ax2.set_title('Cluster Distribution by String Labels')
+        ax2.set_xlabel('String Labels')
+        ax2.set_ylabel('Count')
+        ax2.legend(title='Cluster', bbox_to_anchor=(1.05, 1), loc='upper left')
+        ax2.tick_params(axis='x', rotation=45)
+        
+        # Plot 3: Feature importance for clustering (using PCA loadings)
+        feature_importance = np.abs(pca.components_[0])
+        features = self.numerical_data.columns
+        ax3.barh(features, feature_importance)
+        ax3.set_title('Feature Importance (PC1 Loadings)')
+        ax3.set_xlabel('Absolute Loading Value')
+        
+        # Plot 4: Silhouette analysis
+        from sklearn.metrics import silhouette_samples
+        if len(unique_labels) > 1 and -1 not in unique_labels:
+            silhouette_vals = silhouette_samples(self.scaled_data, labels)
+            y_lower = 10
+            
+            for i, label in enumerate(sorted(unique_labels)):
+                cluster_silhouette_vals = silhouette_vals[labels == label]
+                cluster_silhouette_vals.sort()
+                size_cluster = cluster_silhouette_vals.shape[0]
+                y_upper = y_lower + size_cluster
                 
-            result = self.results[algo_name]
-            labels = result['labels']
+                color = colors[i] if label != -1 else 'black'
+                ax4.fill_betweenx(np.arange(y_lower, y_upper),
+                                0, cluster_silhouette_vals,
+                                facecolor=color, edgecolor=color, alpha=0.7)
+                ax4.text(-0.05, y_lower + 0.5 * size_cluster, str(label))
+                y_lower = y_upper + 10
             
-            ax = axes[idx]
-            unique_labels = set(labels)
-            
-            # Create color map
-            color_map = {label: next(colors) for label in unique_labels}
-            
-            for label in unique_labels:
-                if label == -1:  # Noise points for DBSCAN
-                    color = 'black'
-                    marker = 'x'
-                    label_text = 'Noise'
-                else:
-                    color = color_map[label]
-                    marker = 'o'
-                    label_text = f'Cluster {label}'
-                
-                mask = labels == label
-                ax.scatter(self.scaled_data[mask, 0], self.scaled_data[mask, 1],
-                          c=[color], marker=marker, label=label_text, alpha=0.7, s=50)
-            
-            # Plot centroids for K-means
-            if algo_name == 'kmeans' and 'centers' in result:
-                centers = result['centers']
-                ax.scatter(centers[:, 0], centers[:, 1], marker='*', 
-                          c='red', s=200, label='Centroids', edgecolors='black')
-            
-            ax.set_title(f'{algo_name.upper()} Clustering\n'
-                        f'Silhouette: {result["metrics"]["silhouette_score"]:.3f}' 
-                        if result['metrics'] else f'{algo_name.upper()} Clustering')
-            ax.set_xlabel('Feature 1 (scaled)')
-            ax.set_ylabel('Feature 2 (scaled)')
-            ax.legend()
-            ax.grid(True, alpha=0.3)
-        
-        # Hide unused subplots
-        for idx in range(len(algorithm_names), len(axes)):
-            axes[idx].set_visible(False)
+            ax4.set_xlabel('Silhouette Coefficient Values')
+            ax4.set_ylabel('Cluster Label')
+            ax4.set_title('Silhouette Plot')
+            ax4.axvline(x=np.mean(silhouette_vals), color="red", linestyle="--",
+                       label=f'Average: {np.mean(silhouette_vals):.3f}')
+            ax4.legend()
+        else:
+            ax4.text(0.5, 0.5, 'Silhouette plot requires\n2+ clusters without noise',
+                    ha='center', va='center', transform=ax4.transAxes)
+            ax4.set_title('Silhouette Plot')
         
         plt.tight_layout()
+        plt.suptitle(f'{algorithm_name.upper()} Clustering Analysis', y=1.02, fontsize=16)
         plt.show()
     
-    def plot_dendrogram(self, method='ward'):
+    def plot_dendrogram(self, method='ward', figsize=(12, 6)):
         """Plot dendrogram for hierarchical clustering"""
         if self.scaled_data is None:
             self.preprocess_data()
-            
-        plt.figure(figsize=(12, 8))
+        
+        plt.figure(figsize=figsize)
         
         # Calculate linkage matrix
         linkage_matrix = sch.linkage(self.scaled_data, method=method)
         
-        # Plot dendrogram
-        sch.dendrogram(linkage_matrix, truncate_mode='level', p=10)
-        plt.title(f'Hierarchical Clustering Dendrogram ({method} linkage)')
-        plt.xlabel('Sample index or (cluster size)')
+        # Plot dendrogram with labels
+        sch.dendrogram(linkage_matrix, 
+                      labels=self.string_labels.values,
+                      leaf_rotation=90,
+                      leaf_font_size=10)
+        plt.title(f'Hierarchical Clustering Dendrogram\n({method} linkage)')
+        plt.xlabel('String Labels')
         plt.ylabel('Distance')
-        plt.axhline(y=linkage_matrix[-10, 2], color='r', linestyle='--', 
-                   label='Suggested cut for 3 clusters')
-        plt.legend()
+        plt.tight_layout()
         plt.show()
     
-    def dimensionality_reduction(self, method='pca', n_components=2):
-        """Apply dimensionality reduction for visualization"""
-        if self.scaled_data is None:
-            self.preprocess_data()
-            
-        if method == 'pca':
-            reducer = PCA(n_components=n_components, random_state=self.random_state)
-        elif method == 'tsne':
-            reducer = TSNE(n_components=n_components, random_state=self.random_state)
-        else:
-            raise ValueError("Method must be 'pca' or 'tsne'")
-            
-        reduced_data = reducer.fit_transform(self.scaled_data)
+    def extend_dataframe_with_clusters(self, algorithm_name='kmeans', cluster_column_name='cluster'):
+        """
+        Extend original DataFrame with cluster labels and save to CSV
         
-        print(f"{method.upper()} explained variance ratio: "
-              f"{reducer.explained_variance_ratio_.sum():.3f}" if method == 'pca' else "")
+        Args:
+            algorithm_name (str): Name of clustering algorithm to use
+            cluster_column_name (str): Name for the new cluster column
+            
+        Returns:
+            pd.DataFrame: Extended DataFrame
+        """
+        if algorithm_name not in self.cluster_results:
+            raise ValueError(f"No clustering results found for {algorithm_name}")
         
-        return reduced_data
-
-def main():
-    """Main function to demonstrate the clustering analysis"""
-    print("UNSUPERVISED CLUSTERING ANALYSIS")
-    print("=" * 60)
+        # Get cluster labels
+        cluster_labels = self.cluster_results[algorithm_name]['labels']
+        
+        # Create extended DataFrame
+        extended_df = self.original_df.copy()
+        extended_df[cluster_column_name] = cluster_labels
+        
+        # Add cluster information
+        print(f"\nCluster distribution for {algorithm_name}:")
+        cluster_counts = extended_df[cluster_column_name].value_counts().sort_index()
+        for cluster, count in cluster_counts.items():
+            print(f"  Cluster {cluster}: {count} samples")
+        
+        return extended_df
     
-    # Initialize clustering analyzer
-    cluster_analyzer = UnsupervisedClustering(random_state=42)
+    def save_clustered_data(self, algorithm_name='kmeans', 
+                          output_file='clustered_data.csv',
+                          cluster_column_name='cluster'):
+        """
+        Save the clustered data to CSV file
+        
+        Args:
+            algorithm_name (str): Clustering algorithm to use
+            output_file (str): Output CSV file path
+            cluster_column_name (str): Name for cluster column
+        """
+        extended_df = self.extend_dataframe_with_clusters(algorithm_name, cluster_column_name)
+        
+        # Save to CSV
+        extended_df.to_csv(output_file, index=False)
+        print(f"\nClustered data saved to: {output_file}")
+        print(f"Total samples: {len(extended_df)}")
+        print(f"Cluster column: '{cluster_column_name}'")
+        
+        return extended_df
+    
+    def generate_clustering_report(self, algorithm_name='kmeans'):
+        """Generate comprehensive clustering report"""
+        if algorithm_name not in self.cluster_results:
+            raise ValueError(f"No results found for {algorithm_name}")
+        
+        result = self.cluster_results[algorithm_name]
+        labels = result['labels']
+        
+        print(f"\n{'='*60}")
+        print(f"CLUSTERING REPORT: {algorithm_name.upper()}")
+        print(f"{'='*60}")
+        
+        # Basic information
+        print(f"Dataset Information:")
+        print(f"  Total samples: {len(self.original_df)}")
+        print(f"  Numerical features: {len(self.numerical_data.columns)}")
+        print(f"  String labels: {len(self.string_labels.unique())} unique values")
+        
+        # Cluster information
+        unique_clusters = set(labels)
+        n_clusters = len(unique_clusters) - (1 if -1 in unique_clusters else 0)
+        n_noise = list(labels).count(-1) if -1 in labels else 0
+        
+        print(f"\nCluster Information:")
+        print(f"  Number of clusters: {n_clusters}")
+        if n_noise > 0:
+            print(f"  Noise points: {n_noise}")
+        
+        # Cluster sizes
+        print(f"\nCluster Sizes:")
+        for cluster in sorted(unique_clusters):
+            count = list(labels).count(cluster)
+            percentage = (count / len(labels)) * 100
+            if cluster == -1:
+                print(f"  Noise: {count} samples ({percentage:.1f}%)")
+            else:
+                print(f"  Cluster {cluster}: {count} samples ({percentage:.1f}%)")
+        
+        # Metrics
+        if result['metrics']:
+            print(f"\nClustering Metrics:")
+            for metric, value in result['metrics'].items():
+                print(f"  {metric.replace('_', ' ').title()}: {value:.3f}")
+
+def create_sample_data():
+    """Create sample mixed-type dataset for demonstration"""
+    np.random.seed(42)
+    
+    # Sample string labels (cities)
+    cities = ['New York', 'London', 'Tokyo', 'Paris', 'Sydney', 
+              'Berlin', 'Toronto', 'Singapore', 'Dubai', 'Mumbai']
     
     # Generate sample data
-    print("\n1. Generating sample dataset...")
-    data = cluster_analyzer.generate_sample_data('blobs', n_samples=300)
+    n_samples = 200
+    data = {
+        'city': np.random.choice(cities, n_samples),
+        'population': np.random.normal(1000000, 300000, n_samples),
+        'area': np.random.normal(500, 150, n_samples),
+        'gdp': np.random.normal(50000, 15000, n_samples),
+        'tourists': np.random.normal(1000000, 300000, n_samples),
+        'temperature': np.random.normal(20, 10, n_samples)
+    }
+    
+    # Add some cluster structure
+    df = pd.DataFrame(data)
+    
+    # Create artificial clusters based on city groups
+    cluster_centers = {
+        'New York': [1200000, 600, 60000, 1200000, 15],
+        'London': [1100000, 550, 55000, 1100000, 10],
+        'Tokyo': [1300000, 700, 65000, 1300000, 18],
+        'Paris': [900000, 450, 45000, 900000, 12],
+        'Sydney': [800000, 400, 40000, 800000, 22]
+    }
+    
+    for idx, row in df.iterrows():
+        if row['city'] in cluster_centers:
+            center = cluster_centers[row['city']]
+            df.loc[idx, 'population'] = center[0] + np.random.normal(0, 50000)
+            df.loc[idx, 'area'] = center[1] + np.random.normal(0, 30)
+            df.loc[idx, 'gdp'] = center[2] + np.random.normal(0, 5000)
+            df.loc[idx, 'tourists'] = center[3] + np.random.normal(0, 50000)
+            df.loc[idx, 'temperature'] = center[4] + np.random.normal(0, 3)
+    
+    return df
+
+def main():
+    """Main function to demonstrate the mixed data clustering"""
+    print("MIXED DATA CLUSTERING ANALYSIS")
+    print("=" * 60)
+    
+    # Create or load your dataset
+    print("\n1. Loading dataset...")
+    df = create_sample_data()
+    print("Sample data:")
+    print(df.head())
+    
+    # Initialize clustering analyzer
+    print("\n2. Initializing clustering analyzer...")
+    cluster_analyzer = MixedDataClustering(df, string_column='city', random_state=42)
     
     # Preprocess data
-    print("\n2. Preprocessing data...")
+    print("\n3. Preprocessing numerical data...")
     cluster_analyzer.preprocess_data('standard')
     
     # Find optimal number of clusters
-    print("\n3. Finding optimal number of clusters...")
-    optimal_k_results = cluster_analyzer.find_optimal_k(max_k=10)
+    print("\n4. Finding optimal number of clusters...")
+    optimal_results = cluster_analyzer.find_optimal_clusters(max_k=8, algorithm='kmeans')
     
-    # Apply different clustering algorithms
-    print("\n4. Applying clustering algorithms...")
-    n_clusters = optimal_k_results['optimal_k_silhouette']
+    # Apply clustering algorithms
+    print("\n5. Applying clustering algorithms...")
+    n_clusters = optimal_results['optimal_k_silhouette']
     
     # K-means
     kmeans_labels = cluster_analyzer.apply_kmeans(n_clusters=n_clusters)
-    
-    # DBSCAN
-    dbscan_labels = cluster_analyzer.apply_dbscan(eps=0.3, min_samples=5)
     
     # Hierarchical clustering
     hierarchical_labels = cluster_analyzer.apply_hierarchical(n_clusters=n_clusters)
@@ -441,80 +587,66 @@ def main():
     gmm_labels = cluster_analyzer.apply_gmm(n_components=n_clusters)
     
     # Compare algorithms
-    print("\n5. Comparing algorithms...")
+    print("\n6. Comparing algorithms...")
     comparison_df = cluster_analyzer.compare_algorithms(n_clusters=n_clusters)
     
     # Visualize results
-    print("\n6. Visualizing clustering results...")
-    cluster_analyzer.visualize_clusters()
+    print("\n7. Visualizing clustering results...")
+    cluster_analyzer.visualize_clusters(algorithm_name='kmeans')
+    cluster_analyzer.visualize_clusters(algorithm_name='hierarchical')
     
     # Plot dendrogram
-    print("\n7. Plotting dendrogram...")
+    print("\n8. Plotting dendrogram...")
     cluster_analyzer.plot_dendrogram()
     
-    # Dimensionality reduction visualization
-    print("\n8. Applying dimensionality reduction...")
-    pca_data = cluster_analyzer.dimensionality_reduction('pca')
+    # Generate report
+    print("\n9. Generating clustering report...")
+    cluster_analyzer.generate_clustering_report('kmeans')
     
-    print("\nClustering analysis completed successfully!")
+    # Save clustered data
+    print("\n10. Saving clustered data...")
+    final_df = cluster_analyzer.save_clustered_data(
+        algorithm_name='kmeans',
+        output_file='clustered_city_data.csv',
+        cluster_column_name='city_cluster'
+    )
     
-    return cluster_analyzer
-
-def advanced_demo():
-    """Advanced demonstration with different dataset types"""
-    print("\nADVANCED DEMONSTRATION WITH DIFFERENT DATASETS")
-    print("=" * 60)
+    print("\n" + "="*60)
+    print("CLUSTERING ANALYSIS COMPLETED SUCCESSFULLY!")
+    print("="*60)
+    print(f"Final dataset shape: {final_df.shape}")
+    print(f"Cluster column added: 'city_cluster'")
+    print(f"File saved: 'clustered_city_data.csv'")
     
-    dataset_types = ['blobs', 'moons', 'circles', 'varied_variance']
-    
-    for dataset_type in dataset_types:
-        print(f"\n\nANALYZING {dataset_type.upper()} DATASET")
-        print("-" * 40)
-        
-        analyzer = UnsupervisedClustering(random_state=42)
-        analyzer.generate_sample_data(dataset_type, n_samples=300)
-        analyzer.preprocess_data()
-        
-        # Use appropriate algorithms for different datasets
-        if dataset_type in ['moons', 'circles']:
-            # DBSCAN works better for non-globular clusters
-            analyzer.apply_dbscan(eps=0.2 if dataset_type == 'moons' else 0.1, 
-                                min_samples=5)
-            analyzer.apply_kmeans(n_clusters=2)
-        else:
-            analyzer.apply_kmeans(n_clusters=3)
-            analyzer.apply_hierarchical(n_clusters=3)
-        
-        analyzer.visualize_clusters()
+    return cluster_analyzer, final_df
 
 # Example of using with custom data
-def use_with_custom_data():
-    """Example of using the analyzer with custom data"""
-    print("\nUSING WITH CUSTOM DATA")
-    print("=" * 60)
+def use_with_custom_data(csv_file_path, string_column_name):
+    """Example function for using with custom CSV data"""
+    print(f"\nProcessing custom data from: {csv_file_path}")
     
-    # Create your custom data here
-    custom_data = np.random.randn(100, 2)  # Replace with your data
-    custom_data = pd.DataFrame(custom_data, columns=['Feature_A', 'Feature_B'])
+    # Load your custom data
+    df = pd.read_csv(csv_file_path)
     
-    analyzer = UnsupervisedClustering(data=custom_data)
+    # Initialize analyzer
+    analyzer = MixedDataClustering(df, string_column=string_column_name)
+    
+    # Preprocess and cluster
     analyzer.preprocess_data()
-    
-    # Find optimal k
-    optimal_k = analyzer.find_optimal_k()
-    
-    # Apply clustering
     analyzer.apply_kmeans(n_clusters=3)
-    analyzer.visualize_clusters()
     
-    return analyzer
+    # Visualize and save
+    analyzer.visualize_clusters('kmeans')
+    result_df = analyzer.save_clustered_data(output_file='my_clustered_data.csv')
+    
+    return analyzer, result_df
 
 if __name__ == "__main__":
     # Run main demonstration
-    analyzer = main()
+    analyzer, final_df = main()
     
-    # Run advanced demo
-    advanced_demo()
-    
-    # Example with custom data (uncomment to use)
-    # custom_analyzer = use_with_custom_data()
+    # Example of using with custom data (uncomment and modify as needed)
+    # custom_analyzer, custom_result = use_with_custom_data(
+    #     csv_file_path='your_data.csv',
+    #     string_column_name='your_string_column'
+    # )
