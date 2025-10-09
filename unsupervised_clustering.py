@@ -13,7 +13,7 @@ import warnings
 warnings.filterwarnings('ignore')
 
 class AdvancedUnsupervisedClustering:
-    def __init__(self, weights=None, n_clusters=3, clustering_method='kmeans', 
+    def __init__(self, outlier_fraction=0.1, weights=None, n_clusters=3, clustering_method='kmeans', 
                  outlier_method='isolation_forest', normalization_method='standard'):
         """
         Initialize the clustering model with advanced features
@@ -25,6 +25,7 @@ class AdvancedUnsupervisedClustering:
         - outlier_method: str, 'isolation_forest', 'zscore', or 'dbscan'
         - normalization_method: str, 'standard', 'robust', or 'minmax'
         """
+        self.outlier_fraction = outlier_fraction
         self.weights = weights
         self.n_clusters = n_clusters
         self.clustering_method = clustering_method
@@ -63,7 +64,7 @@ class AdvancedUnsupervisedClustering:
         outlier_mask = np.zeros(len(data), dtype=bool)
         
         if self.outlier_method == 'isolation_forest':
-            iso_forest = IsolationForest(contamination=0.1, random_state=42)
+            iso_forest = IsolationForest(contamination=self.outlier_fraction, random_state=42)
             outlier_labels = iso_forest.fit_predict(data)
             outlier_mask = outlier_labels == -1
             
@@ -419,6 +420,7 @@ def main():
 
     # Configuration
     CONFIG = {
+        'outlier_fraction': 0.07,
         'weights': FEATURE_WEIGHT,
         'n_clusters': 3,
         'clustering_method': 'kmeans', # or dbscan
