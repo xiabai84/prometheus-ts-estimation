@@ -1,8 +1,8 @@
 import pandas as pd
 import numpy as np
-import warnings
-from generate_sample_data import generate_sample_prometheus_data
-warnings.filterwarnings('ignore')
+import matplotlib.pyplot as plt
+from scipy import stats
+
 
 class PrometheusDataProfiler:
     def __init__(self, csv_file_path):
@@ -116,15 +116,13 @@ class PrometheusDataProfiler:
         
         return non_zero_df.corr()
     
-    def generate_comprehensive_report(self):
+    def generate_profiling_report(self):
         """
         Generate comprehensive data profiling report
         
         Returns:
             dict: Dictionary containing all report components
         """
-        print("Generating comprehensive data profiling report...")
-        
         report = {
             'overview': {},
             'metric_profiles': [],
@@ -163,7 +161,9 @@ class PrometheusDataProfiler:
             'avg_zero_percentage': np.mean([p['zero_percentage'] for p in report['metric_profiles']]),
             'avg_null_percentage': np.mean([p['null_percentage'] for p in report['metric_profiles']])
         }
-        
+        print("\n" + "="*80)
+        print("DATA PREPROCESSING COMPLETED SUCCESSFULLY!")
+        print("="*80)
         return report
     
     def export_report_to_csv(self, report, output_prefix="prometheus_profile"):
@@ -226,53 +226,65 @@ class PrometheusDataProfiler:
         #     print(f"  {profile['metric_name']}: {profile['zero_percentage']:.2f}% zeros "
         #           f"({profile['zero_count']:,} out of {profile['total_records']:,})")
 
-
-if __name__ == "__main__":
-    # Generate sample data (comment out if using real data)
-    # csv_file = generate_sample_prometheus_data()
-    csv_file = "file-name.csv"
-    
-    # Initialize profiler
-    profiler = PrometheusDataProfiler(csv_file)
-    
-    try:
-        # Load data
-        profiler.load_data()
+    def interpret_skewness(skew_value):
+        if abs(skew_value) < 0.5:
+            return "Fairly Symmetric"
+        elif abs(skew_value) < 1:
+            return "Moderately Skewed"
+        else:
+            return "Highly Skewed"
         
-        # Generate comprehensive report
-        report = profiler.generate_comprehensive_report()
+    def interpret_kurtosis(kurt_value):
+        if kurt_value < -1:
+            return "Platykurtic (Flat)"
+        elif kurt_value > 1:
+            return "Leptokurtic (Peaked)"
+        else:
+            return "Mesokurtic (Normal)"
         
-        # Print summary to console
-        profiler.print_report_summary(report)
+    def virtualize_skewness_kurtosis(self, dataframe: pd.DataFrame, figsize=(15,10), save_path=None):
+        """
+        Visualize skewness and kurtosis for each numerical column in a Dataframe.
+        """
+        numerical_cols = dataframe.select_dtypes(include=[np.number]).columns.tolist()
+        n_cols = len(numerical_cols)
+        if n_cols == 0:
+            print("No numeriacal columns found in the Dataframe")
+            return None, None
         
-        # Export to CSV files
-        profiler.export_report_to_csv(report, "prometheus_data_profile")
-        
-        print("\n" + "="*80)
-        print("REPORT GENERATION COMPLETED SUCCESSFULLY!")
-        print("="*80)
-        
-        df = pd.read_csv("prometheus_data_profile_metric_profiles.csv")
-        sorted_column = "p25"
-        threshold_sec = 0.5
+        n_rows = int(np.ceil(n_cols / 3))
+        n_subplot_cols = min(3, n_cols)
+        fig, axes = plt.subplots(n_rows, n_subplot_cols, figsize=figsize, constrained_layout=True)
+        axes = axes.flatten() if n_cols > 1 else [axes]
+        skewness_values = dataframe[numerical_cols].skew()
+        kurtosis_values = dataframe[numerical_cols].kurtosis()
 
-        filtered_report = df.loc[df[sorted_column] >= threshold_sec]
-        sorted_report = filtered_report.sort_values(by[sorted_column], ascending=False)
-        print(sorted_report)
-        sorted_report.to_csv("z_filtered_metric_profile.csv", index=False)
-
-        affected_microflows = set()
-        for row in sorted_report.metric_name.values:
-            category = row.split(".")[0]
-            affected_microflows.add(category)
-
-        print("\n" + "="*80)
-        print(f"AFFECTED MICROFLOWS FROM TOTAL {len(profiler.numeric_columns)} SORT BY {sorted_column}")
-        print("="*80)
-
-        for microflow in affected_microflows:
-            print(microflow)
-
-    except Exception as e:
-        print(f"Error during profiling: {e}")
-    
+        for i, col in enumerate(numerical_cols):
+            ax = axes[i]
+            data_col = dataframe[col].dropna()
+            median_val = dataframe[col].median()
+            p75 = np.percentile(dataframe[col], 75, method="linear")
+            ax.hist(data_col, bins=50, alpha=0.7, density=True, color='lightblue', edgecolor='black', linewidth=0.5)
+            if len(data_col) > 1:
+                kde_x = np.linspace(data_col.min(), data_col.max(), 100)
+                kde = stats.gaussian_kde(data_col)
+                ax.plot(kde_x, kde(kde_x), color='red', linewidth=2, label='KDE')
+                ax.axvline(median_val, label="Median")
+                ax.axvline(p75, label="P75")
+            skew_val = skewness_values[col]
+            kurt_val = kurtosis_values[col]
+            ax.set_title(col, fontsize=5, fontweight='bold', pad=15)
+            ax.set_xlabel('Value', fontsize=4)
+            ax.set_ylabel('Density', fontsize=4)
+            stats_text = f'Skewness: {skew_val:.3f}\nKurtosis: {kurt_val:.3f}'
+            ax.text(0.02, 0.98, stats_text, transform=ax.transAxes,
+                    verticalalignment='top', horizontalalignment='left',
+                    bbox=dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.8), fontsize=5)
+            ax.legend()
+            ax.grid(True, alpha=0.3)
+        for i in range(n_cols, len(axes)):
+            axes[i].set_visible(False)
+        if save_path:
+            fig.savefig(save_path, dpi=300, bbox_inches='tight')
+            print(f"Figure saved to: {save_path}")
+        return fig, axes

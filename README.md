@@ -5,7 +5,76 @@ This program is used to estimate the metric-data, which is downloaded from Grafa
 ## 1 Calculation of statistical indicators
 By running prometheus_data_profiling.py the program will calculate the basic statistical indicators, which relies on the given time-series input-csv-file.
 
-## 2 Estimation of Outliers
+## 2 Data Profiling
+With this library we can easily calculate the basic statistics of form Prometheus exported time series data.
+
+Code example
+```
+name_prefix = "report/prometheus_profile"
+csv_file = generate_sample_prometheus_data(file_name="report/sample_prometheus_data.csv")
+# csv_file = "file-name.csv"
+profiler = PrometheusDataProfiler(csv_file)
+profiler.load_data()
+report_profiles = profiler.generate_profiling_report()
+profiler.export_report_to_csv(report_profiles, name_prefix)
+```
+
+## 3 Setting constrains for generating reports
+
+There are two ways to set groups for reporting.
+
+### 3.1 Builder pattern
+TBD
+
+```
+...
+business_builder = ComprehensiveReportBuilder(df)
+
+# Define various business constraints
+(business_builder
+ .create_filter_group("q1_targets")
+ .add_column_filter('sales_amount', '>=', 2000)
+ .add_column_filter('profit', '>=', 300)
+ .add_column_filter('rating', '>=', 3)
+ 
+ .create_filter_group("high_risk_orders") 
+ .add_column_filter('profit', '<', 0)
+ .add_column_filter('rating', '<=', 2)
+ ...
+```
+
+### 3.2 Passing config as dictionary
+
+```
+def create_dynamic_filters():
+    """Create filters based on dynamic conditions"""
+    dynamic_builder = ComprehensiveReportBuilder(df)
+    
+    # These could come from user input, configuration, etc.
+    dynamic_constraints = [
+        {'group': 'user_defined_1', 'column': 'sales_amount', 'op': '>', 'value': 2500},
+        {'group': 'user_defined_1', 'column': 'region', 'op': 'in', 'value': ['North', 'South']},
+        {'group': 'user_defined_2', 'column': 'product_category', 'op': '==', 'value': 'Clothing'},
+        {'group': 'user_defined_2', 'column': 'profit', 'op': '>', 'value': 100},
+    ]
+    
+    for constraint in dynamic_constraints:
+        dynamic_builder.create_filter_group(constraint['group'])
+        dynamic_builder.add_column_filter(
+            constraint['column'], 
+            constraint['op'], 
+            constraint['value']
+        )
+    
+    return dynamic_builder.build_all()
+
+dynamic_results = create_dynamic_filters()
+print("Dynamic Filter Results:")
+for group, result in dynamic_results.items():
+    print(f"  {group}: {len(result)} rows")
+```
+
+## 4 Estimation of Outliers
 By using unsupervised_clustering.py it will use "KMeans" clustering algorithm and additional "isolation_forest" to detect outliers and the potential clusters. Due to different data distribution it is to recommend to use "stardard normalization" algorithm to normalize data before training the mode. This can be done by setting the parameter "CONFIG".
 
 In the current implementation we also considered to assign weights (feature importance), to make a better prediction.

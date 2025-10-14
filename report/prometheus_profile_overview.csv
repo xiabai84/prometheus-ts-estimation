@@ -1,0 +1,2 @@
+total_metrics,total_timestamps,data_range,time_span_days
+5,2000,"{'start': Timestamp('2024-01-01 00:00:00'), 'end': Timestamp('2024-03-24 07:00:00')}",83
