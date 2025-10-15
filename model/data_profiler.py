@@ -242,10 +242,11 @@ class PrometheusDataProfiler:
         else:
             return "Mesokurtic (Normal)"
         
-    def virtualize_skewness_kurtosis(self, dataframe: pd.DataFrame, figsize=(15,10), save_path=None):
+    def virtualize_skewness_kurtosis(self, columns: list, figsize=(15,10), save_path=None):
         """
         Visualize skewness and kurtosis for each numerical column in a Dataframe.
         """
+        dataframe = self.df[columns].copy()
         numerical_cols = dataframe.select_dtypes(include=[np.number]).columns.tolist()
         n_cols = len(numerical_cols)
         if n_cols == 0:

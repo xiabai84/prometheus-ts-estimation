@@ -233,11 +233,12 @@ class ComprehensiveReportBuilder:
         
         return pd.DataFrame(summary_data)
 
-    def save_csv(self, file_prefix: str, reports: pd.DataFrame, dir=""):
-        now = datetime.now()
-        time_iso_format = now.strftime("%Y-%m-%d_%H-%M-%S")
-
-        dir = os.path.join(dir, time_iso_format)
+    def save_csv(self, file_prefix: str, reports: pd.DataFrame, dir="", use_iso_suffix=True):
+        if use_iso_suffix:
+            now = datetime.now()
+            time_iso_format = now.strftime("%Y-%m-%d_%H-%M-%S")
+            dir = os.path.join(dir, time_iso_format)
+            
         if dir:
             directory = Path(dir)
             directory.mkdir(exist_ok=True)
