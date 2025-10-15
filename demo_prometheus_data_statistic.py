@@ -61,4 +61,4 @@ if __name__ == "__main__":
     
     instable_data = pd.read_csv(f"{export_path}/prometheus_metric_instabile_service.csv")
     cols = instable_data.metric_name.to_list()
-    profiler.virtualize_skewness_kurtosis(columns=cols, figsize=(18, 12), save_path=f"{export_path}/instable_service_distribution.png")
+    profiler.virtualize_skewness_kurtosis(columns=cols, figsize=(18, 12), save_path=f"{export_path}/instable_service_distribution.png", bw_method=0.5)

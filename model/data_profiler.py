@@ -242,7 +242,7 @@ class PrometheusDataProfiler:
         else:
             return "Mesokurtic (Normal)"
         
-    def virtualize_skewness_kurtosis(self, columns: list, figsize=(15,10), save_path=None):
+    def virtualize_skewness_kurtosis(self, columns: list, figsize=(15,10), save_path=None, bw_method=0.5):
         """
         Visualize skewness and kurtosis for each numerical column in a Dataframe.
         """
@@ -263,12 +263,13 @@ class PrometheusDataProfiler:
         for i, col in enumerate(numerical_cols):
             ax = axes[i]
             data_col = dataframe[col].dropna()
-            median_val = dataframe[col].median()
-            p75 = np.percentile(dataframe[col], 75, method="linear")
+            data_col = data_col[data_col != 0]
+            median_val = data_col.median()
+            p75 = np.percentile(data_col, 75, method="linear")
             ax.hist(data_col, bins=50, alpha=0.7, density=True, color='lightblue', edgecolor='black', linewidth=0.5)
             if len(data_col) > 1:
                 kde_x = np.linspace(data_col.min(), data_col.max(), 100)
-                kde = stats.gaussian_kde(data_col)
+                kde = stats.gaussian_kde(data_col, bw_method)
                 ax.plot(kde_x, kde(kde_x), color='red', linewidth=2, label='KDE')
                 ax.axvline(median_val, label="Median", color ='blue')
                 ax.axvline(p75, label="P75", color ='green')
