@@ -261,3 +261,5 @@ class ComprehensiveReportBuilder:
                 for microflow in affected_microflows:
                     print(microflow)
                 print("="*120)
+        print(f"All files are stored under the direcotry: {dir}")
+        return dir

@@ -57,8 +57,8 @@ if __name__ == "__main__":
         .select_columns(report_columns))
 
     filtered_dfs = report_builder.build_all()
-    report_builder.save_csv(file_prefix="prometheus_metric", reports=filtered_dfs, dir="report", use_iso_suffix=False)
+    export_path = report_builder.save_csv(file_prefix="prometheus_metric", reports=filtered_dfs, dir="report", use_iso_suffix=True)
     
-    instable_data = pd.read_csv(f"report/prometheus_metric_instabile_service.csv")
+    instable_data = pd.read_csv(f"{export_path}/prometheus_metric_instabile_service.csv")
     cols = instable_data.metric_name.to_list()
-    profiler.virtualize_skewness_kurtosis(columns=cols, figsize=(18, 12), save_path="instable_service_distribution.png")
+    profiler.virtualize_skewness_kurtosis(columns=cols, figsize=(18, 12), save_path=f"{export_path}/instable_service_distribution.png")

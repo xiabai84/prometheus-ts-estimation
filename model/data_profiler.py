@@ -270,8 +270,8 @@ class PrometheusDataProfiler:
                 kde_x = np.linspace(data_col.min(), data_col.max(), 100)
                 kde = stats.gaussian_kde(data_col)
                 ax.plot(kde_x, kde(kde_x), color='red', linewidth=2, label='KDE')
-                ax.axvline(median_val, label="Median")
-                ax.axvline(p75, label="P75")
+                ax.axvline(median_val, label="Median", color ='blue')
+                ax.axvline(p75, label="P75", color ='green')
             skew_val = skewness_values[col]
             kurt_val = kurtosis_values[col]
             ax.set_title(col, fontsize=5, fontweight='bold', pad=15)
