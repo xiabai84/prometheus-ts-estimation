@@ -192,7 +192,7 @@ class PrometheusDataProfiler:
         
         # Export overview
         overview_df = pd.DataFrame([report['overview']])
-        overview_df.to_csv(f"{output_prefix}_overview.csv", index=False)
+        overview_df.to_csv(f"{output_prefix}_overview.csv", index=False, float_format='%.2f')
         print(f"Overview exported to {output_prefix}_overview.csv")
     
     def print_report_summary(self, report):

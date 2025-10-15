@@ -248,7 +248,7 @@ class ComprehensiveReportBuilder:
             file_path = os.path.join(dir, f"{file_name}.csv")
             if group_name != "default":
                 
-                report.to_csv(file_path, index=False)
+                report.to_csv(file_path, index=False, float_format='%.2f')
                 
                 affected_microflows = set()
                 for row in report.metric_name.values:
