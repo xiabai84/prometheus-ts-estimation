@@ -1,14 +1,12 @@
 import pandas as pd
 import os
-from pathlib import Path
-from datetime import datetime
 from typing import List, Dict, Any, Callable
 
 class ComprehensiveReportBuilder:
     def __init__(self, df: pd.DataFrame):
         self.df = df.copy()
         self.filter_groups = {}  # Store multiple filter groups
-        self.current_group = "default"
+        self.current_group = None
         self.filter_groups[self.current_group] = {
             'filters': [],
             'sort_columns': [],
@@ -18,6 +16,7 @@ class ComprehensiveReportBuilder:
             'transformations': [],
             'description': ''
         }
+        self.visualizations = []
     
     def create_filter_group(self, group_name: str, description: str = "") -> 'ComprehensiveReportBuilder':
         """Create a new filter group"""
@@ -50,6 +49,11 @@ class ComprehensiveReportBuilder:
         condition = self._create_condition(column, operator, value)
         return self.add_filter(condition)
     
+    def add_visualization(self) -> 'ComprehensiveReportBuilder':
+        """Add visualization to group"""
+        self.visualizations.append(self.current_group)
+        return self
+
     def add_range_filter(self, column: str, min_val: Any = None, max_val: Any = None) -> 'ComprehensiveReportBuilder':
         """Add range filter to current group"""
         def range_condition(df):
@@ -170,7 +174,8 @@ class ComprehensiveReportBuilder:
         """Build DataFrames for all filter groups with their respective sorting"""
         results = {}
         for group_name in self.filter_groups.keys():
-            results[group_name] = self.build_single(group_name)
+            if group_name:
+                results[group_name] = self.build_single(group_name)
         return results
     
     def get_group_configuration(self, group_name: str = None) -> Dict[str, Any]:
@@ -233,23 +238,12 @@ class ComprehensiveReportBuilder:
         
         return pd.DataFrame(summary_data)
 
-    def save_csv(self, file_prefix: str, reports: pd.DataFrame, dir="", use_iso_suffix=True):
-        if use_iso_suffix:
-            now = datetime.now()
-            time_iso_format = now.strftime("%Y-%m-%d_%H-%M-%S")
-            dir = os.path.join(dir, time_iso_format)
-            
-        if dir:
-            directory = Path(dir)
-            directory.mkdir(exist_ok=True)
-
+    def save_csv(self, file_prefix: str, reports: pd.DataFrame, dir=""):
         for group_name, report in reports.items():
             file_name = f"{file_prefix}_{group_name}"
             file_path = os.path.join(dir, f"{file_name}.csv")
             if group_name != "default":
-                
                 report.to_csv(file_path, index=False, float_format='%.2f')
-                
                 affected_microflows = set()
                 for row in report.metric_name.values:
                     category = row.split(".")[0]

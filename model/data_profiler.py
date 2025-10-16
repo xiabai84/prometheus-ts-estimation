@@ -166,7 +166,7 @@ class PrometheusDataProfiler:
         print("="*80)
         return report
     
-    def export_report_to_csv(self, report, output_prefix="prometheus_profile"):
+    def export_report_to_csv(self, report, output_dir, output_prefix=""):
         """
         Export the profiling report to CSV files
         
@@ -177,23 +177,23 @@ class PrometheusDataProfiler:
         # Export metric profiles
         if report['metric_profiles']:
             profiles_df = pd.DataFrame(report['metric_profiles'])
-            profiles_df.to_csv(f"{output_prefix}_metric_profiles.csv", index=False)
-            print(f"Metric profiles exported to {output_prefix}_metric_profiles.csv")
+            profiles_df.to_csv(f"{output_dir}/{output_prefix}_metric_profiles.csv", index=False)
+            print(f"Metric profiles exported to {output_dir}/{output_prefix}_metric_profiles.csv")
         
         # Export correlation matrix
         if report['correlation_matrix'] is not None:
-            report['correlation_matrix'].to_csv(f"{output_prefix}_correlations.csv")
-            print(f"Correlation matrix exported to {output_prefix}_correlations.csv")
+            report['correlation_matrix'].to_csv(f"{output_dir}/{output_prefix}_correlations.csv")
+            print(f"Correlation matrix exported to {output_dir}/{output_prefix}_correlations.csv")
         
         # Export summary statistics
         summary_df = pd.DataFrame([report['summary_statistics']])
-        summary_df.to_csv(f"{output_prefix}_summary.csv", index=False)
-        print(f"Summary statistics exported to {output_prefix}_summary.csv")
+        summary_df.to_csv(f"{output_dir}/{output_prefix}_summary.csv", index=False)
+        print(f"Summary statistics exported to {output_dir}/{output_prefix}_summary.csv")
         
         # Export overview
         overview_df = pd.DataFrame([report['overview']])
-        overview_df.to_csv(f"{output_prefix}_overview.csv", index=False, float_format='%.2f')
-        print(f"Overview exported to {output_prefix}_overview.csv")
+        overview_df.to_csv(f"{output_dir}/{output_prefix}_overview.csv", index=False, float_format='%.2f')
+        print(f"Overview exported to {output_dir}/{output_prefix}_overview.csv")
     
     def print_report_summary(self, report):
         """

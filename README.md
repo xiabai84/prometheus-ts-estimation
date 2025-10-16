@@ -102,3 +102,49 @@ For example:
         "total_records": 0.0
     }
 ```
+
+## 5 Generating reports from multiple input files
+
+In order to simplify genarating reports from multiple sources for example from multiple results of prometheus queries saving with csv-format, have can do it by using `ProfilingPipelineDirector`.
+This class can register a set of builder-configurations by extending a `IReportBuilderConfig[ComprehensiveReportBuilder]`. Currently we only implemented `ComprehensiveReportBuilder`, which already contains rich statistical indicators e.g. max, min, median, skewness, kurtosis, n-th-percentile, zero_counts etc..
+They are very useful for analysing time-series-data. 
+
+Ref: `3.1 Builder pattern`
+
+Under custom_builder_configs we provide a example `PrometheusMetricReportBuilderCofnig` for putting cosntraints on the default `ComprehensiveReportBuilder`.
+
+To undertand how to use it, see the example below:
+
+```
+report_dir = "report"
+director = ProfilingPipelineDirector()
+
+prometheus_metric_config = PrometheusMetricReportBuilderConfig(
+    csv_file=f"{report_dir}/1_sample_prometheus_data.csv",
+    file_name="mx_activity_max",
+    builder_name="mx_activity_max",
+    generate_visualization=True
+)
+prometheus_count_config = PrometheusMetricReportBuilderConfig(
+    csv_file=f"{report_dir}/2_sample_prometheus_data.csv",
+    file_name="mx_activity_count",
+    builder_name="mx_activity_count",
+    generate_visualization=False
+)
+# register custom builders
+director.register_builder_config(builder_config=prometheus_metric_config)
+director.register_builder_config(builder_config=prometheus_count_config)
+
+director.process_multiple_files(report_dir=report_dir)
+
+# Print summary
+director.print_summary()
+```
+
+In this exmpale we have two csv files as input, both of them will use the same conditions to creating reports for its own datasets.
+
+In real-world szenario it make sense to implement multiple BuilderConfiguration classes for different bussiness scopes.
+
+## 6 Fazit
+
+
