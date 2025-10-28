@@ -687,7 +687,7 @@ class MetricComparator:
         
         return pd.DataFrame(summary_data)
 
-    def get_most_changed_metrics(self, n=10, by='change_percent'):
+    def get_most_changed_metrics(self, n=10, by='p75_change_percent'):
         """Get the most changed metrics"""
         if 'statistical' not in self.comparison_results:
             self.basic_statistical_comparison()
@@ -701,6 +701,8 @@ class MetricComparator:
             stats_df['sort_key'] = abs(stats_df['mean_absolute_change'])
         elif by == 'change_percent':
             stats_df['sort_key'] = abs(stats_df['mean_change_percent'])
+        elif by == 'p75_change_percent':
+            stats_df['sort_key'] = abs(stats_df['p75_change_percent'])
         elif by == 'cohens_d':
             stats_df['sort_key'] = abs(stats_df['cohens_d'])
         elif by == 'anomaly_score' and 'anomaly' in self.comparison_results:
