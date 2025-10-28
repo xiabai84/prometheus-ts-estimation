@@ -279,6 +279,15 @@ class MetricComparator:
                 metrics_skipped += 1
                 continue
             
+            # Check for near-constant data before statistical tests
+            normal_unique_ratio = len(normal_data.unique()) / len(normal_data)
+            fault_unique_ratio = len(fault_data.unique()) / len(fault_data)
+            
+            if normal_unique_ratio < 0.1 or fault_unique_ratio < 0.1:
+                print(f"⚠️  Skipping metric '{metric}': data has low variability (unique values: normal={normal_unique_ratio:.1%}, fault={fault_unique_ratio:.1%})")
+                metrics_skipped += 1
+                continue
+
             # Basic statistics
             normal_mean = np.mean(normal_data)
             fault_mean = np.mean(fault_data)
