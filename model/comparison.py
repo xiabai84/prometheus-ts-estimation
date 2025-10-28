@@ -287,13 +287,27 @@ class MetricComparator:
             
             normal_std = np.std(normal_data)
             fault_std = np.std(fault_data)
-            std_change_pct = ((fault_std - normal_std) / (normal_std + 1e-10) * 100) if normal_std != 0 else float('inf')
+            std_change_pct = ((fault_std - normal_std) / (normal_std + 1e-10) * 100) if normal_std != 0 else 0
             
+            # Percentile statistic handle zero and infinite cases
             normal_p75 = np.percentile(normal_data, 75)
             fault_p75 = np.percentile(fault_data, 75)
             p75_change = fault_p75 - normal_p75
-            p75_change_pct = (p75_change / (abs(normal_p75) + 1e-10) * 100) if normal_p75 != 0 else float('inf')
-
+            
+            # Fix for infinite values: handle zero normal_p75 case
+            if abs(normal_p75) < 1e-10:  # If normal_p75 is effectively zero
+                if abs(fault_p75) < 1e-10:  # Both are zero
+                    p75_change_pct = 0.0
+                else:  # Normal is zero, fault is not zero
+                    # Use a large but finite value to indicate significant change
+                    p75_change_pct = 1000.0 if fault_p75 > 0 else -1000.0
+            else:
+                p75_change_pct = (p75_change / abs(normal_p75)) * 100
+            
+            # Additional safeguard: cap extreme values
+            if abs(p75_change_pct) > 1e6:  # If still extremely large
+                p75_change_pct = 1000.0 if p75_change_pct > 0 else -1000.0
+            
             # Extreme values
             normal_max = np.max(normal_data)
             fault_max = np.max(fault_data)
@@ -347,6 +361,15 @@ class MetricComparator:
             return pd.DataFrame()
         
         stats_df = pd.DataFrame(results)
+        
+        # Check for any remaining infinite values
+        inf_count = np.isinf(stats_df['p75_change_percent']).sum()
+        if inf_count > 0:
+            print(f"⚠️  Found {inf_count} metrics with infinite p75_change_percent, replacing with capped values")
+            stats_df['p75_change_percent'] = stats_df['p75_change_percent'].replace(
+                [np.inf, -np.inf], [1000.0, -1000.0]
+            )
+        
         self.comparison_results['statistical'] = stats_df
         print(f"✅ Successfully compared {len(stats_df)} metrics")
         return stats_df
@@ -428,6 +451,17 @@ class MetricComparator:
                 fault_p75 = row.get('fault_p75', fault_mean)
                 p75_change = row.get('p75_absolute_change', 0)
                 p75_change_pct = row.get('p75_change_percent', 0)
+
+                # Protect against extreme values in percentile features
+                p75_change_pct_safe = p75_change_pct
+                if abs(p75_change_pct_safe) > 1000:  # Cap extreme values
+                    p75_change_pct_safe = 1000.0 if p75_change_pct_safe > 0 else -1000.0
+                
+                p75_ratio = fault_p75 / (normal_p75 + 1e-10)
+                if p75_ratio > 100:  # Cap extreme ratios
+                    p75_ratio = 100.0
+                elif p75_ratio < 0.01 and p75_ratio > 0:  # Handle very small ratios
+                    p75_ratio = 0.01
                 
                 percentile_features = [
                     p75_change_pct,                  # 75th percentile change percentage

@@ -46,6 +46,7 @@ def main():
     
     print("Initial data overview:")
     print(f"Normal data: {normal_df.shape}")
+    print(normal_df)
     print(f"Fault data: {fault_df.shape}")
     
     # Initialize and analyze
