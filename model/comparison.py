@@ -253,7 +253,7 @@ class MetricComparator:
         else:
             return df[self.value_col]
 
-    def basic_statistical_comparison(self, min_data_points=None):
+    def basic_statistical_comparison(self, min_data_points=None, unique_ration=0.1):
         """Basic statistical comparison with enhanced data validation"""
         if min_data_points is None:
             min_data_points = self.min_data_points
@@ -283,8 +283,8 @@ class MetricComparator:
             normal_unique_ratio = len(normal_data.unique()) / len(normal_data)
             fault_unique_ratio = len(fault_data.unique()) / len(fault_data)
             
-            if normal_unique_ratio < 0.1 or fault_unique_ratio < 0.1:
-                print(f"⚠️  Skipping metric '{metric}': data has low variability (unique values: normal={normal_unique_ratio:.1%}, fault={fault_unique_ratio:.1%})")
+            if normal_unique_ratio < unique_ration or fault_unique_ratio < unique_ration:
+                # print(f"⚠️  Skipping metric '{metric}': data has low variability (unique values: normal={normal_unique_ratio:.1%}, fault={fault_unique_ratio:.1%})")
                 metrics_skipped += 1
                 continue
 
