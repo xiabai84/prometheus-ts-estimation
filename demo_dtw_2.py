@@ -793,30 +793,30 @@ class RobustTimeSeriesClustering:
             similar_data = self.original_data_[similar['column_name']]
             ax1.plot(similar_data.index, similar_data.values,
                     color=colors[i], linewidth=2, alpha=0.7,
-                    label=f"{similar['column_name']} (sim: {similar['similarity_score']:.3f})")
+                    label=f"{similar['column_name'][:20]} (sim: {similar['similarity_score']:.3f})")
         
         ax1.set_title(f'Top {top_k} Similar Columns to "{column_name}"\n(Window constraint: {self.window_constraint})')
-        ax1.set_xlabel('Time')
-        ax1.set_ylabel('Value')
-        ax1.legend()
+        ax1.set_xlabel('Time', fontweight='bold', fontsize=8)
+        ax1.set_ylabel('Value', fontweight='bold', fontsize=8)
+        ax1.legend(fontsize=5)
         ax1.grid(True, alpha=0.3)
         
         # Plot 2: Similarity bar chart
-        names = [similar['column_name'] for similar in similar_cols]
+        names = [f'{similar["column_name"][:20]}...{similar["column_name"][-10:]}' for similar in similar_cols]
         scores = [similar['similarity_score'] for similar in similar_cols]
         same_cluster = [similar['same_cluster'] for similar in similar_cols]
         
         colors_bar = ['green' if sc else 'blue' for sc in same_cluster]
         
-        bars = ax2.barh(names, scores, color=colors_bar, alpha=0.7)
-        ax2.set_xlabel('Similarity Score')
-        ax2.set_title('Similarity Scores')
+        bars = ax2.barh(names, scores, color=colors_bar, alpha=0.5)
+        ax2.set_xlabel('Similarity Score', fontweight='bold', fontsize=8)
+        ax2.set_title('Similarity Scores', fontweight='bold', fontsize=8)
         ax2.grid(True, alpha=0.3)
         
         # Add value labels
         for bar, score in zip(bars, scores):
             ax2.text(bar.get_width() + 0.01, bar.get_y() + bar.get_height()/2,
-                    f'{score:.3f}', va='center', ha='left')
+                    f'{score:.3f}', va='center', ha='left', fontsize=8)
         
         # Add legend
         from matplotlib.patches import Patch
@@ -824,7 +824,7 @@ class RobustTimeSeriesClustering:
             Patch(facecolor='green', alpha=0.7, label='Same Cluster'),
             Patch(facecolor='blue', alpha=0.7, label='Different Cluster')
         ]
-        ax2.legend(handles=legend_elements, loc='lower right')
+        ax2.legend(handles=legend_elements, loc='lower right', fontsize=8)
         
         plt.tight_layout()
         plt.show()
