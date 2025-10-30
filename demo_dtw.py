@@ -1,8 +1,10 @@
 import pandas as pd
 import numpy as np
 from dtaidistance import dtw
-from sklearn.cluster import AgglomerativeClustering
+from sklearn.cluster import KMeans, AgglomerativeClustering
 from sklearn.preprocessing import StandardScaler
+from sklearn.metrics import silhouette_score, calinski_harabasz_score
+from sklearn.decomposition import PCA
 import matplotlib.pyplot as plt
 import seaborn as sns
 from scipy.cluster.hierarchy import dendrogram, linkage
@@ -24,16 +26,30 @@ class NumpyEncoder(json.JSONEncoder):
         return super().default(obj)
 
 class RobustTimeSeriesClustering:
-    def __init__(self, n_clusters=3, method='complete', metric='dtw', 
-                 min_non_zero_ratio=0.1, min_variance=0.001):
+    def __init__(self, n_clusters=3, method='kmeans', metric='dtw', 
+                 min_non_zero_ratio=0.1, min_variance=0.001,
+                 dtw_window=None, dtw_use_c=False, random_state=42):
         """
         Initialize the Robust Time Series Clustering model
+        
+        Parameters:
+        - n_clusters: Number of clusters to form
+        - method: Clustering method ('kmeans' or 'hierarchical')
+        - metric: Distance metric ('dtw' or 'euclidean')
+        - min_non_zero_ratio: Minimum ratio of non-zero/non-null values to keep a metric
+        - min_variance: Minimum variance threshold to keep a metric
+        - dtw_window: DTW window size (None for no constraint, or integer for Sakoe-Chiba band)
+        - dtw_use_c: Whether to use fast C implementation
+        - random_state: Random seed for reproducibility
         """
         self.n_clusters = n_clusters
         self.method = method
         self.metric = metric
         self.min_non_zero_ratio = min_non_zero_ratio
         self.min_variance = min_variance
+        self.dtw_window = dtw_window
+        self.dtw_use_c = dtw_use_c
+        self.random_state = random_state
         self.labels_ = None
         self.distance_matrix_ = None
         self.valid_columns_ = None
@@ -42,6 +58,8 @@ class RobustTimeSeriesClustering:
         self.normalized_data_ = None
         self.original_data_ = None
         self.similar_metrics_dict_ = None
+        self.cluster_centers_ = None
+        self.clustering_scores_ = None
         
     def _clean_data(self, data):
         """
@@ -104,8 +122,8 @@ class RobustTimeSeriesClustering:
         if len(self.removed_columns_) > 0:
             print("Removed metrics due to insufficient data:")
             for col in self.removed_columns_[:10]:
-                col_null_ratio = float(null_ratio[col])  # Convert to Python float
-                col_non_zero_ratio = float(non_zero_ratio[col])  # Convert to Python float
+                col_null_ratio = float(null_ratio[col])
+                col_non_zero_ratio = float(non_zero_ratio[col])
                 col_variance = float(variances[col]) if not np.isnan(variances[col]) else 0.0
                 print(f"  - {col}: null_ratio={col_null_ratio:.3f}, "
                       f"non_zero_ratio={col_non_zero_ratio:.3f}, "
@@ -126,7 +144,7 @@ class RobustTimeSeriesClustering:
     
     def compute_distance_matrix(self, data):
         """
-        Compute distance matrix using DTW or Euclidean distance
+        Compute distance matrix using DTW or Euclidean distance with window constraint
         """
         # Convert DataFrame to numpy array (metrics as columns)
         ts_data = data.values.T
@@ -135,10 +153,31 @@ class RobustTimeSeriesClustering:
         
         if self.metric == 'dtw':
             try:
-                self.distance_matrix_ = dtw.distance_matrix_fast(ts_data)
+                if self.dtw_use_c:
+                    # Using fast C implementation with window
+                    print(f"Using DTW with window={self.dtw_window}")
+                    self.distance_matrix_ = dtw.distance_matrix_fast(
+                        ts_data, 
+                        window=self.dtw_window,
+                        use_c=True
+                    )
+                else:
+                    # Using pure Python implementation with window
+                    print(f"Using DTW (Python) with window={self.dtw_window}")
+                    self.distance_matrix_ = dtw.distance_matrix(
+                        ts_data, 
+                        window=self.dtw_window,
+                        use_c=False
+                    )
+                
+                # Convert to proper matrix format
                 self.distance_matrix_ = np.array(self.distance_matrix_)
+                
+                # Replace any NaN or inf values with large distance
                 self.distance_matrix_ = np.nan_to_num(self.distance_matrix_, nan=1e6, posinf=1e6, neginf=1e6)
+                
                 print("DTW distance matrix computed successfully")
+                
             except Exception as e:
                 print(f"DTW computation failed: {e}. Falling back to Euclidean distance.")
                 self.metric = 'euclidean'
@@ -155,6 +194,60 @@ class RobustTimeSeriesClustering:
             
         return self.distance_matrix_
     
+    def _perform_kmeans_clustering(self, distance_matrix):
+        """
+        Perform K-Means clustering on distance matrix using kernel trick
+        """
+        print("Performing K-Means clustering...")
+        
+        # Convert distance matrix to similarity matrix using Gaussian kernel
+        gamma = 1.0 / (np.median(distance_matrix[distance_matrix > 0]) ** 2)
+        similarity_matrix = np.exp(-gamma * distance_matrix ** 2)
+        
+        # Perform K-Means on the similarity matrix
+        kmeans = KMeans(
+            n_clusters=self.final_n_clusters_,
+            random_state=self.random_state,
+            n_init=10
+        )
+        
+        # Use PCA to reduce dimensionality for better K-Means performance
+        pca = PCA(n_components=min(10, similarity_matrix.shape[0]))
+        features = pca.fit_transform(similarity_matrix)
+        
+        self.labels_ = kmeans.fit_predict(features)
+        self.cluster_centers_ = kmeans.cluster_centers_
+        
+        # Calculate clustering quality scores
+        try:
+            silhouette_avg = silhouette_score(features, self.labels_)
+            calinski_harabasz = calinski_harabasz_score(features, self.labels_)
+            self.clustering_scores_ = {
+                'silhouette_score': float(silhouette_avg),
+                'calinski_harabasz_score': float(calinski_harabasz)
+            }
+            print(f"Clustering scores - Silhouette: {silhouette_avg:.3f}, Calinski-Harabasz: {calinski_harabasz:.3f}")
+        except Exception as e:
+            print(f"Could not compute clustering scores: {e}")
+            self.clustering_scores_ = None
+        
+        return self.labels_
+    
+    def _perform_hierarchical_clustering(self, distance_matrix):
+        """
+        Perform hierarchical clustering on distance matrix
+        """
+        print("Performing hierarchical clustering...")
+        
+        clustering = AgglomerativeClustering(
+            n_clusters=self.final_n_clusters_,
+            metric='precomputed',
+            linkage='average'
+        )
+        
+        self.labels_ = clustering.fit_predict(distance_matrix)
+        return self.labels_
+    
     def fit(self, data):
         """
         Fit the clustering model to the data with robust data handling
@@ -164,6 +257,8 @@ class RobustTimeSeriesClustering:
         self.original_data_ = cleaned_data
         
         print(f"Data shape after cleaning: {cleaned_data.shape}")
+        print(f"Time series length: {len(cleaned_data)}")
+        print(f"Clustering method: {self.method}")
         
         # Normalize the data
         scaler = StandardScaler()
@@ -182,14 +277,13 @@ class RobustTimeSeriesClustering:
         
         print(f"Distance matrix shape: {distance_matrix.shape}")
         
-        # Perform hierarchical clustering
-        clustering = AgglomerativeClustering(
-            n_clusters=self.final_n_clusters_,
-            metric='precomputed',
-            linkage=self.method
-        )
-        
-        self.labels_ = clustering.fit_predict(distance_matrix)
+        # Perform clustering based on selected method
+        if self.method == 'kmeans':
+            self.labels_ = self._perform_kmeans_clustering(distance_matrix)
+        elif self.method == 'hierarchical':
+            self.labels_ = self._perform_hierarchical_clustering(distance_matrix)
+        else:
+            raise ValueError(f"Unknown clustering method: {self.method}")
         
         # Convert labels to Python integers
         self.labels_ = [int(label) for label in self.labels_]
@@ -211,7 +305,7 @@ class RobustTimeSeriesClustering:
         # Group metrics by cluster
         cluster_groups = {}
         for i, (metric, cluster_id) in enumerate(zip(self.valid_columns_, self.labels_)):
-            if i < len(self.labels_):  # Safety check
+            if i < len(self.labels_):
                 if cluster_id not in cluster_groups:
                     cluster_groups[cluster_id] = []
                 cluster_groups[cluster_id].append(metric)
@@ -231,9 +325,6 @@ class RobustTimeSeriesClustering:
         Return dictionary where:
         - Key: metric name
         - Value: list of similar metric names (from the same cluster)
-        
-        Returns:
-        - dict: {metric_name: [similar_metric1, similar_metric2, ...]}
         """
         if self.similar_metrics_dict_ is None:
             raise ValueError("Model must be fitted first")
@@ -243,7 +334,6 @@ class RobustTimeSeriesClustering:
     def get_cluster_assignments(self):
         """
         Get cluster assignments for each metric
-        Returns: {metric_name: cluster_id}
         """
         if self.labels_ is None:
             raise ValueError("Model must be fitted first")
@@ -251,63 +341,123 @@ class RobustTimeSeriesClustering:
         assignments = {}
         for i, column in enumerate(self.valid_columns_):
             if i < len(self.labels_):
-                assignments[column] = int(self.labels_[i])  # Convert to Python int
+                assignments[column] = int(self.labels_[i])
             else:
                 assignments[column] = -1
         return assignments
     
-    def get_metric_similarity_groups(self):
+    def get_clustering_scores(self):
         """
-        Alternative method that returns clusters as lists of similar metrics
-        Returns: [[metric1, metric2, ...], [metric5, metric6, ...], ...]
+        Get clustering quality scores
         """
-        if self.labels_ is None:
-            raise ValueError("Model must be fitted first")
+        return self.clustering_scores_
+    
+    def find_optimal_clusters(self, data, max_clusters=10):
+        """
+        Find optimal number of clusters using elbow method and silhouette analysis
+        """
+        print("Finding optimal number of clusters...")
+        
+        # Clean data first
+        cleaned_data = self._clean_data(data)
+        self.original_data_ = cleaned_data
+        
+        # Normalize the data
+        scaler = StandardScaler()
+        normalized_data = pd.DataFrame(
+            scaler.fit_transform(cleaned_data),
+            index=cleaned_data.index,
+            columns=cleaned_data.columns
+        )
+        
+        # Compute distance matrix
+        distance_matrix = self.compute_distance_matrix(normalized_data)
+        
+        # Convert to similarity matrix for K-Means
+        gamma = 1.0 / (np.median(distance_matrix[distance_matrix > 0]) ** 2)
+        similarity_matrix = np.exp(-gamma * distance_matrix ** 2)
+        
+        # Reduce dimensionality
+        pca = PCA(n_components=min(10, similarity_matrix.shape[0]))
+        features = pca.fit_transform(similarity_matrix)
+        
+        # Test different numbers of clusters
+        k_range = range(2, min(max_clusters + 1, features.shape[0]))
+        inertia = []
+        silhouette_scores = []
+        
+        for k in k_range:
+            kmeans = KMeans(n_clusters=k, random_state=self.random_state, n_init=10)
+            labels = kmeans.fit_predict(features)
             
-        cluster_groups = {}
-        for i, (metric, cluster_id) in enumerate(zip(self.valid_columns_, self.labels_)):
-            if i < len(self.labels_):
-                cluster_id_int = int(cluster_id)  # Convert to Python int
-                if cluster_id_int not in cluster_groups:
-                    cluster_groups[cluster_id_int] = []
-                cluster_groups[cluster_id_int].append(metric)
+            inertia.append(kmeans.inertia_)
+            if k > 1:  # Silhouette score requires at least 2 clusters
+                try:
+                    silhouette_scores.append(silhouette_score(features, labels))
+                except:
+                    silhouette_scores.append(-1)
+            else:
+                silhouette_scores.append(-1)
+            
+            print(f"K={k}: Inertia={inertia[-1]:.2f}, Silhouette={silhouette_scores[-1]:.3f}")
         
-        return list(cluster_groups.values())
+        # Find optimal K (elbow method + silhouette)
+        optimal_k = self._find_elbow_point(inertia, k_range)
+        
+        # Also consider silhouette scores
+        if len(silhouette_scores) > 0:
+            best_silhouette_k = k_range[np.argmax(silhouette_scores)]
+            # Prefer the one with better silhouette score if close
+            if abs(optimal_k - best_silhouette_k) <= 2:
+                optimal_k = best_silhouette_k
+        
+        print(f"Optimal number of clusters: {optimal_k}")
+        
+        # Plot results
+        self._plot_optimal_clusters(k_range, inertia, silhouette_scores, optimal_k)
+        
+        return optimal_k
     
-    def save_results_to_json(self, filename_prefix='clustering_results'):
-        """
-        Save all results to JSON files with proper type handling
-        """
-        if self.similar_metrics_dict_ is None:
-            raise ValueError("Model must be fitted first")
-        
-        # Save similar metrics dictionary
-        similar_metrics_file = f'{filename_prefix}_similar_metrics.json'
-        with open(similar_metrics_file, 'w') as f:
-            json.dump(self.similar_metrics_dict_, f, indent=2, cls=NumpyEncoder)
-        print(f"💾 Saved similar metrics dictionary to '{similar_metrics_file}'")
-        
-        # Save cluster assignments
-        assignments = self.get_cluster_assignments()
-        assignments_file = f'{filename_prefix}_cluster_assignments.json'
-        with open(assignments_file, 'w') as f:
-            json.dump(assignments, f, indent=2, cls=NumpyEncoder)
-        print(f"💾 Saved cluster assignments to '{assignments_file}'")
-        
-        # Save data quality report
-        report = self.get_data_quality_report()
-        report_file = f'{filename_prefix}_data_quality_report.json'
-        with open(report_file, 'w') as f:
-            json.dump(report, f, indent=2, cls=NumpyEncoder)
-        print(f"💾 Saved data quality report to '{report_file}'")
-        
-        return {
-            'similar_metrics': similar_metrics_file,
-            'cluster_assignments': assignments_file,
-            'data_quality_report': report_file
-        }
+    def _find_elbow_point(self, inertia, k_range):
+        """Find elbow point using the kneedle algorithm"""
+        try:
+            from kneed import KneeLocator
+            kneedle = KneeLocator(list(k_range), inertia, curve='convex', direction='decreasing')
+            return kneedle.elbow if kneedle.elbow else 3
+        except:
+            # Fallback: simple second derivative method
+            differences = np.diff(inertia)
+            second_diff = np.diff(differences)
+            if len(second_diff) > 0:
+                return k_range[np.argmax(second_diff) + 1]
+            return 3
     
-    def visualize_clusters(self, figsize=(15, 10)):
+    def _plot_optimal_clusters(self, k_range, inertia, silhouette_scores, optimal_k):
+        """Plot optimal cluster analysis"""
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 4))
+        
+        # Elbow curve
+        ax1.plot(k_range, inertia, 'bo-')
+        ax1.axvline(x=optimal_k, color='red', linestyle='--', label=f'Optimal K={optimal_k}')
+        ax1.set_xlabel('Number of Clusters')
+        ax1.set_ylabel('Inertia')
+        ax1.set_title('Elbow Method')
+        ax1.legend()
+        ax1.grid(True, alpha=0.3)
+        
+        # Silhouette scores
+        ax2.plot(k_range, silhouette_scores, 'go-')
+        ax2.axvline(x=optimal_k, color='red', linestyle='--', label=f'Optimal K={optimal_k}')
+        ax2.set_xlabel('Number of Clusters')
+        ax2.set_ylabel('Silhouette Score')
+        ax2.set_title('Silhouette Analysis')
+        ax2.legend()
+        ax2.grid(True, alpha=0.3)
+        
+        plt.tight_layout()
+        plt.show()
+
+    def visualize_clusters(self, figsize=(15, 12)):
         """
         Visualize the clustering results
         """
@@ -331,7 +481,7 @@ class RobustTimeSeriesClustering:
                         color=color, alpha=0.7,
                         label=f'Cluster {cluster_id}' if metric == self.valid_columns_[0] else "")
         
-        ax1.set_title('Time Series Clusters (Normalized)')
+        ax1.set_title(f'Time Series Clusters ({self.method}, DTW window={self.dtw_window})')
         ax1.set_xlabel('Time')
         ax1.set_ylabel('Normalized Value')
         ax1.legend()
@@ -339,7 +489,6 @@ class RobustTimeSeriesClustering:
         # Plot 2: Show similar metrics for a sample metric
         ax2 = axes[0, 1]
         if self.similar_metrics_dict_:
-            # Find a metric that has similar counterparts
             sample_metric = None
             for metric, similar_metrics in self.similar_metrics_dict_.items():
                 if similar_metrics:
@@ -352,7 +501,7 @@ class RobustTimeSeriesClustering:
                         self.normalized_data_[sample_metric], 
                         'b-', linewidth=3, label=f'Target: {sample_metric}')
                 
-                for similar_metric in similar_metrics[:3]:  # Show first 3 similar metrics
+                for similar_metric in similar_metrics[:3]:
                     ax2.plot(self.normalized_data_.index, 
                             self.normalized_data_[similar_metric], 
                             'r--', alpha=0.7, label=f'Similar: {similar_metric}')
@@ -381,7 +530,7 @@ class RobustTimeSeriesClustering:
         clusters = sorted(cluster_sizes.keys())
         sizes = [cluster_sizes[cluster_id] for cluster_id in clusters]
         
-        ax4.bar([str(c) for c in clusters], sizes)  # Convert to string for plotting
+        ax4.bar([str(c) for c in clusters], sizes, color=colors[:len(clusters)])
         ax4.set_title('Cluster Sizes')
         ax4.set_xlabel('Cluster ID')
         ax4.set_ylabel('Number of Metrics')
@@ -390,24 +539,8 @@ class RobustTimeSeriesClustering:
         
         plt.tight_layout()
         plt.show()
-    
-    def get_data_quality_report(self):
-        """
-        Generate a report on data quality and filtering
-        """
-        if self.valid_columns_ is None:
-            raise ValueError("Model must be fitted first")
-            
-        total_metrics = len(self.valid_columns_) + len(self.removed_columns_)
-        return {
-            'original_metrics_count': int(total_metrics),
-            'valid_metrics_count': int(len(self.valid_columns_)),
-            'removed_metrics_count': int(len(self.removed_columns_)),
-            'final_n_clusters': int(self.final_n_clusters_),
-            'retention_rate': float(len(self.valid_columns_) / total_metrics if total_metrics > 0 else 0)
-        }
 
-def generate_sample_data(n_timesteps=100, n_metrics=15):
+def generate_sample_data(n_timesteps=100, n_metrics=20):
     """
     Generate sample time series data with clear patterns for testing
     """
@@ -416,125 +549,162 @@ def generate_sample_data(n_timesteps=100, n_metrics=15):
     
     data = {}
     
-    # Create clear patterns that should form clusters
     patterns = [
-        # Pattern 1: Sine waves
         lambda i: np.sin(np.linspace(0 + i*0.5, 4*np.pi + i*0.5, n_timesteps)) + np.random.normal(0, 0.1, n_timesteps),
-        
-        # Pattern 2: Linear trends  
         lambda i: np.linspace(0, 10 + i, n_timesteps) + np.random.normal(0, 0.2, n_timesteps),
-        
-        # Pattern 3: Seasonal patterns
         lambda i: np.sin(np.linspace(0, 8*np.pi, n_timesteps)) * (1 + i*0.1) + np.random.normal(0, 0.15, n_timesteps),
-        
-        # Pattern 4: Random walks
-        lambda i: np.cumsum(np.random.normal(0, 0.1 + i*0.01, n_timesteps))
+        lambda i: np.cumsum(np.random.normal(0, 0.1 + i*0.01, n_timesteps)),
+        lambda i: np.exp(np.linspace(0, 2, n_timesteps)) + np.random.normal(0, 0.3, n_timesteps)
     ]
     
     for i in range(n_metrics):
         pattern_type = i % len(patterns)
         data[f'metric_pattern{pattern_type}_{i}'] = patterns[pattern_type](i)
     
-    # Add some problematic data
-    data['metric_all_zeros'] = np.zeros(n_timesteps)
-    data['metric_mostly_nulls'] = np.where(np.random.random(n_timesteps) > 0.3, np.random.normal(0, 1, n_timesteps), np.nan)
-    
     df = pd.DataFrame(data, index=time_index)
     return df
 
+def compare_clustering_methods(data):
+    """
+    Compare K-Means vs Hierarchical clustering
+    """
+    print("=== Comparing Clustering Methods ===")
+    
+    methods = ['kmeans', 'hierarchical']
+    results = {}
+    
+    for method in methods:
+        print(f"\n🧪 Testing {method.upper()} clustering...")
+        
+        try:
+            ts_cluster = RobustTimeSeriesClustering(
+                n_clusters=5,
+                method=method,
+                metric='dtw',
+                dtw_window=2,
+                dtw_use_c=True,
+                random_state=42
+            )
+            
+            ts_cluster.fit(data)
+            
+            similar_metrics_dict = ts_cluster.get_similar_metrics_dict()
+            assignments = ts_cluster.get_cluster_assignments()
+            scores = ts_cluster.get_clustering_scores()
+            
+            # Calculate statistics
+            metrics_with_similar = sum(1 for similar_list in similar_metrics_dict.values() if len(similar_list) > 0)
+            avg_similar_metrics = np.mean([len(similar_list) for similar_list in similar_metrics_dict.values()])
+            
+            cluster_counts = {}
+            for cluster_id in assignments.values():
+                cluster_counts[cluster_id] = cluster_counts.get(cluster_id, 0) + 1
+            
+            results[method] = {
+                'similar_metrics_dict': similar_metrics_dict,
+                'cluster_counts': cluster_counts,
+                'metrics_with_similar': metrics_with_similar,
+                'avg_similar_metrics': avg_similar_metrics,
+                'clustering_scores': scores
+            }
+            
+            print(f"   ✅ Success - {metrics_with_similar} metrics have similar counterparts")
+            print(f"   📊 Cluster distribution: {cluster_counts}")
+            if scores:
+                print(f"   📈 Clustering scores: {scores}")
+            
+        except Exception as e:
+            print(f"   ❌ Failed: {e}")
+            results[method] = {'error': str(e)}
+    
+    return results
+
 def main():
     """
-    Main function demonstrating the similar metrics dictionary
+    Main function demonstrating K-Means clustering
     """
-    print("=== Time Series Similar Metrics Finder ===")
+    print("=== K-Means Time Series Clustering ===")
     
     # Generate sample data
-    data = generate_sample_data(n_timesteps=100, n_metrics=15)
+    data = generate_sample_data(n_timesteps=100, n_metrics=20)
     print(f"Generated data shape: {data.shape}")
-    print(f"Sample metrics: {list(data.columns)[:8]}...")
     
-    # Perform clustering
-    ts_cluster = RobustTimeSeriesClustering(
-        n_clusters=4,
-        method='complete',
+    # Example 1: K-Means with automatic optimal cluster detection
+    print("\n" + "="*50)
+    print("Example 1: K-Means with optimal cluster detection")
+    
+    ts_cluster_kmeans = RobustTimeSeriesClustering(
+        method='kmeans',
         metric='dtw',
-        min_non_zero_ratio=0.1,
-        min_variance=0.001
+        dtw_window=2,
+        dtw_use_c=True,
+        random_state=42
     )
     
-    try:
-        ts_cluster.fit(data)
-        
-        # Get data quality report
-        report = ts_cluster.get_data_quality_report()
-        print(f"\n📊 Data Quality Report:")
-        print(f"   Original metrics: {report['original_metrics_count']}")
-        print(f"   Valid metrics: {report['valid_metrics_count']}")
-        print(f"   Final clusters: {report['final_n_clusters']}")
-        print(f"   Retention rate: {report['retention_rate']:.1%}")
-        
-        # 🎯 MAIN RESULT: Get the similar metrics dictionary
-        similar_metrics_dict = ts_cluster.get_similar_metrics_dict()
-        
-        print(f"\n🎯 SIMILAR METRICS DICTIONARY:")
-        print(f"   Found {len(similar_metrics_dict)} metrics with similar patterns")
-        
-        # Display the results
-        print(f"\n📋 SIMILARITY GROUPS (first 10 metrics):")
-        displayed = 0
-        for metric, similar_metrics in similar_metrics_dict.items():
-            if displayed >= 10:
-                break
-            if similar_metrics:  # Only show metrics that have similar counterparts
-                print(f"   {metric} -> Similar to: {similar_metrics}")
-                displayed += 1
-        
-        # Show cluster assignments
-        assignments = ts_cluster.get_cluster_assignments()
-        print(f"\n🏷️  CLUSTER ASSIGNMENTS (first 10):")
-        for i, (metric, cluster_id) in enumerate(assignments.items()):
-            if i >= 10:
-                break
-            print(f"   {metric} -> Cluster {cluster_id}")
-        
-        # Alternative view: similarity groups
-        similarity_groups = ts_cluster.get_metric_similarity_groups()
-        print(f"\n👥 SIMILARITY GROUPS (clusters):")
-        for i, group in enumerate(similarity_groups):
-            print(f"   Group {i} ({len(group)} metrics): {group}")
-        
-        # Save results to JSON files
-        saved_files = ts_cluster.save_results_to_json()
-        
-        # Generate summary statistics
-        print(f"\n📈 SUMMARY STATISTICS:")
-        metrics_with_similar = sum(1 for similar_list in similar_metrics_dict.values() if len(similar_list) > 0)
-        avg_similar_metrics = np.mean([len(similar_list) for similar_list in similar_metrics_dict.values()])
-        
-        print(f"   Metrics with similar counterparts: {metrics_with_similar}/{len(similar_metrics_dict)}")
-        print(f"   Average similar metrics per metric: {avg_similar_metrics:.1f}")
-        
-        # Count metrics per cluster
-        cluster_counts = {}
-        for cluster_id in assignments.values():
-            cluster_counts[cluster_id] = cluster_counts.get(cluster_id, 0) + 1
-        
-        print(f"   Metrics per cluster: {cluster_counts}")
-        
-        # Visualize results
-        print(f"\n📊 Generating visualizations...")
-        ts_cluster.visualize_clusters()
-        
-        return similar_metrics_dict
-        
-    except Exception as e:
-        print(f"❌ Error during clustering: {e}")
-        import traceback
-        traceback.print_exc()
-        return None
+    # Find optimal number of clusters
+    optimal_k = ts_cluster_kmeans.find_optimal_clusters(data, max_clusters=8)
+    
+    # Fit with optimal K
+    ts_cluster_kmeans.n_clusters = optimal_k
+    ts_cluster_kmeans.fit(data)
+    
+    # Get results
+    similar_metrics_kmeans = ts_cluster_kmeans.get_similar_metrics_dict()
+    assignments_kmeans = ts_cluster_kmeans.get_cluster_assignments()
+    scores_kmeans = ts_cluster_kmeans.get_clustering_scores()
+    
+    print(f"\n🎯 K-Means Results (K={optimal_k}):")
+    print(f"   Metrics with similar counterparts: {sum(1 for lst in similar_metrics_kmeans.values() if len(lst) > 0)}")
+    print(f"   Clustering scores: {scores_kmeans}")
+    
+    # Example 2: Hierarchical clustering for comparison
+    print("\n" + "="*50)
+    print("Example 2: Hierarchical clustering")
+    
+    ts_cluster_hierarchical = RobustTimeSeriesClustering(
+        n_clusters=optimal_k,
+        method='hierarchical',
+        metric='dtw',
+        dtw_window=2,
+        dtw_use_c=True
+    )
+    
+    ts_cluster_hierarchical.fit(data)
+    similar_metrics_hierarchical = ts_cluster_hierarchical.get_similar_metrics_dict()
+    
+    print(f"\n🎯 Hierarchical Results (K={optimal_k}):")
+    print(f"   Metrics with similar counterparts: {sum(1 for lst in similar_metrics_hierarchical.values() if len(lst) > 0)}")
+    
+    # Compare methods
+    print("\n" + "="*50)
+    comparison_results = compare_clustering_methods(data)
+    
+    # Display comparison
+    print("\n📊 METHOD COMPARISON:")
+    print("=" * 60)
+    for method, result in comparison_results.items():
+        if 'error' not in result:
+            print(f"\n{method.upper()}:")
+            print(f"  Metrics with similar counterparts: {result['metrics_with_similar']}")
+            print(f"  Average similar metrics: {result['avg_similar_metrics']:.1f}")
+            print(f"  Cluster distribution: {result['cluster_counts']}")
+            if result['clustering_scores']:
+                print(f"  Clustering scores: {result['clustering_scores']}")
+    
+    # Visualize K-Means results
+    print("\n" + "="*50)
+    print("Generating K-Means visualization...")
+    ts_cluster_kmeans.visualize_clusters()
+    
+    return comparison_results
 
 if __name__ == "__main__":
-    result_dict = main()
-    # if result_dict is not None:
-    #     for k, v in result_dict.items():
-    #         print(k, v)
+    results = main()
+    
+    print(f"\n🎯 Key advantages of K-Means:")
+    print("1. ⚡ Much faster than hierarchical clustering (O(n) vs O(n²))")
+    print("2. 📊 Better scalability for large datasets")
+    print("3. 🎯 Automatic cluster center computation")
+    print("4. 📈 Built-in quality metrics (inertia, silhouette score)")
+    print("5. 🔧 Easy to find optimal number of clusters")
+    print("\n💡 Recommendation: Use K-Means for datasets with >100 time series")
