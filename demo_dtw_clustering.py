@@ -1,4 +1,6 @@
 from model.ts_clustering import DTWClustering
+import numpy as np
+import pandas as pd
 
 # Demonstration function
 def main():
