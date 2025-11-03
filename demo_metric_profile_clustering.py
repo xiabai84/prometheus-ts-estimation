@@ -82,7 +82,7 @@ def main(training_data: str, output_filename: str):
 
 if __name__ == "__main__":
     dir_name = "report"
-    training_data = f"{dir_name}/prometheus_profile_metric_profiles.csv"
+    training_data = f"{dir_name}/prometheus_metric_metric_profiles.csv"
     output_file = f"{dir_name}/clustered_data_with_outliers.csv"
     main(training_data, output_file)
     

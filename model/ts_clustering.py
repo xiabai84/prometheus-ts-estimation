@@ -36,14 +36,14 @@ class DTWClustering:
         Robust Time Series Clustering using tslearn library
         
         Parameters:
-        - n_clusters: Number of clusters
+        - n_clusters: Number of clusters (TimeSeriesKMeans)
         - metric: Distance metric ('dtw', 'softdtw', 'euclidean')
         - max_iter: Maximum number of iterations
         - min_non_zero_ratio: Minimum ratio of non-zero/non-null values
         - min_variance: Minimum variance threshold
         - scaler_type: Normalization type ('minmax', 'meanvar')
         - dtw_params: DTW parameters dictionary
-        - n_init: Number of K-Means initializations
+        - n_init: Number of K-Means initializations (TimeSeriesKMeans)
         - random_state: Random seed for reproducibility
         - verbose: Whether to show detailed output
         - window_constraint: Window size for DTW constraint (None, 'sakoe_chiba', 'itakura')
