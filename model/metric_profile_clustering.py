@@ -12,7 +12,7 @@ from scipy import stats
 import warnings
 warnings.filterwarnings('ignore')
 
-class AdvancedUnsupervisedClustering:
+class MetricProfileClustering:
     def __init__(self, outlier_fraction=0.1, weights=None, n_clusters=3, clustering_method='kmeans', 
                  outlier_method='isolation_forest', normalization_method='standard'):
         """

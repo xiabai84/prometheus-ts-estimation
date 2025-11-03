@@ -1,6 +1,6 @@
 import pandas as pd
 import numpy as np
-from model.unsupervised_clustering import AdvancedUnsupervisedClustering
+from model.metric_profile_clustering import MetricProfileClustering
 
 def main(training_data: str, output_filename: str):
     print("Advanced Unsupervised Clustering with Outlier Detection")
@@ -49,7 +49,7 @@ def main(training_data: str, output_filename: str):
         print(f"   {key}: {value}")
     
     # Initialize clustering model
-    clustering = AdvancedUnsupervisedClustering(**CONFIG)
+    clustering = MetricProfileClustering(**CONFIG)
     
     # Perform clustering
     print(f"\n🔍 Performing clustering with outlier detection...")

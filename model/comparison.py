@@ -800,18 +800,18 @@ class MetricComparator:
             f'Metric Comparison Analysis: Normal vs Fault Period\n'
             f'Total Metrics: {total_metrics} | Significant: {significant_metrics} '
             f'({significance_ratio:.1%}) | Anomalous: {anomalous_count} | Fault-Only: {fault_only_count}',
-            fontsize=16, fontweight='bold', y=0.95
+            fontsize=8, fontweight='bold', y=0.95
         )
         
         # 1. Top metrics change percentage (top-left)
         ax1 = fig.add_subplot(gs[0, 0])
         metrics_short = [name[:25] + '...' if len(name) > 25 else name for name in top_metrics['metric']]
         colors = ['#ff6b6b' if x > 0 else '#4ecdc4' for x in top_metrics['mean_change_percent']]
-        bars = ax1.barh(metrics_short, top_metrics['mean_change_percent'], color=colors, alpha=0.8)
+        bars = ax1.barh(metrics_short, top_metrics['mean_change_percent'], color=colors, alpha=0.5)
         
-        ax1.set_xlabel('Change Percentage (%)', fontweight='bold')
+        ax1.set_xlabel('Change Percentage (%)', fontweight='bold', fontsize=6)
         ax1.set_title(f'Top {top_n} Most Changed Metrics\n(by percentage change)', 
-                     fontweight='bold', fontsize=12)
+                     fontweight='bold', fontsize=6)
         ax1.axvline(x=0, color='black', linestyle='-', alpha=0.3)
         ax1.grid(axis='x', alpha=0.3)
         
@@ -824,7 +824,7 @@ class MetricComparator:
                     bar.get_y() + bar.get_height()/2, 
                     f'{value:+.1f}%{sign_symbol}', 
                     ha='left' if width >= 0 else 'right', 
-                    va='center', fontsize=9, fontweight='bold', color=label_color)
+                    va='center', fontsize=6, fontweight='bold', color=label_color)
         
         # 2. Effect size distribution (top-middle)
         ax2 = fig.add_subplot(gs[0, 1])
@@ -842,11 +842,11 @@ class MetricComparator:
         
         ax2.axvline(x=0.5, color='red', linestyle='--', alpha=0.7, label='Medium (0.5)')
         ax2.axvline(x=0.8, color='darkred', linestyle='--', alpha=0.7, label='Large (0.8)')
-        ax2.set_xlabel("Cohen's d Effect Size", fontweight='bold')
-        ax2.set_ylabel('Number of Metrics', fontweight='bold')
+        ax2.set_xlabel("Cohen's d Effect Size", fontweight='bold',fontsize=6)
+        ax2.set_ylabel('Number of Metrics', fontweight='bold', fontsize=6)
         ax2.set_title('Effect Size Distribution\n(>0.8: Large, >0.5: Medium, <0.5: Small)', 
-                     fontweight='bold', fontsize=12)
-        ax2.legend()
+                     fontweight='bold', fontsize=6)
+        ax2.legend(fontsize=6)
         ax2.grid(alpha=0.3)
         
         # Add effect size statistics
@@ -854,7 +854,7 @@ class MetricComparator:
         ax2.text(0.95, 0.95, effect_stats, transform=ax2.transAxes, 
                 verticalalignment='top', horizontalalignment='right',
                 bbox=dict(boxstyle='round', facecolor='white', alpha=0.8),
-                fontsize=9)
+                fontsize=6)
         
         # 3. P-value distribution (top-right)
         ax3 = fig.add_subplot(gs[0, 2])
@@ -869,11 +869,11 @@ class MetricComparator:
         
         ax3.axvline(x=sig_cutoff, color='red', linestyle='--', alpha=0.7, 
                    label=f'Significance (p<{sig_cutoff})')
-        ax3.set_xlabel('P-value', fontweight='bold')
-        ax3.set_ylabel('Number of Metrics', fontweight='bold')
+        ax3.set_xlabel('P-value', fontweight='bold', fontsize=6)
+        ax3.set_ylabel('Number of Metrics', fontweight='bold', fontsize=6)
         ax3.set_title('P-value Distribution\n(Green: Statistically Significant)', 
-                     fontweight='bold', fontsize=12)
-        ax3.legend()
+                     fontweight='bold', fontsize=6)
+        ax3.legend(fontsize=6)
         ax3.grid(alpha=0.3)
         
         # Add p-value statistics
@@ -881,8 +881,8 @@ class MetricComparator:
         pval_stats = f"Significant: {sig_count}/{len(p_values)}\n({sig_count/len(p_values):.1%})"
         ax3.text(0.95, 0.95, pval_stats, transform=ax3.transAxes, 
                 verticalalignment='top', horizontalalignment='right',
-                bbox=dict(boxstyle='round', facecolor='white', alpha=0.8),
-                fontsize=9)
+                bbox=dict(boxstyle='round', facecolor='white', alpha=0.5),
+                fontsize=6)
         
         # 4. Anomaly detection results (middle-left)
         ax4 = fig.add_subplot(gs[1, 0])
@@ -899,9 +899,9 @@ class MetricComparator:
                 colors_anom = ['#e55039' if score < -0.1 else '#fad390' for score in scores]
                 bars_anom = ax4.barh(metrics_anom, scores, color=colors_anom, alpha=0.8)
                 
-                ax4.set_xlabel('Anomaly Score', fontweight='bold')
+                ax4.set_xlabel('Anomaly Score', fontweight='bold', fontsize=6)
                 ax4.set_title(f'Top Anomalous Metrics\n(lower score = more anomalous)', 
-                             fontweight='bold', fontsize=12)
+                             fontweight='bold', fontsize=6)
                 ax4.grid(axis='x', alpha=0.3)
                 
                 # Add anomaly score labels
@@ -909,17 +909,17 @@ class MetricComparator:
                     width = bar.get_width()
                     ax4.text(width - 0.01, bar.get_y() + bar.get_height()/2, 
                             f'{score:.3f}', ha='right', va='center', 
-                            fontsize=8, fontweight='bold', color='white')
+                            fontsize=6, fontweight='bold', color='white')
             else:
                 ax4.text(0.5, 0.5, 'No Anomalous\nMetrics Detected', 
                         ha='center', va='center', transform=ax4.transAxes,
-                        fontsize=12, fontweight='bold')
-                ax4.set_title('Anomaly Detection Results', fontweight='bold', fontsize=12)
+                        fontsize=6, fontweight='bold')
+                ax4.set_title('Anomaly Detection Results', fontweight='bold', fontsize=6)
         else:
             ax4.text(0.5, 0.5, 'Anomaly Detection\nNot Run', 
                     ha='center', va='center', transform=ax4.transAxes,
-                    fontsize=12, fontweight='bold')
-            ax4.set_title('Anomaly Detection Results', fontweight='bold', fontsize=12)
+                    fontsize=6, fontweight='bold')
+            ax4.set_title('Anomaly Detection Results', fontweight='bold', fontsize=6)
         
         # 5. Effect size composition (middle-middle)
         ax5 = fig.add_subplot(gs[1, 1])
@@ -934,11 +934,11 @@ class MetricComparator:
             for autotext in autotexts:
                 autotext.set_color('white')
                 autotext.set_fontweight('bold')
-            ax5.set_title('Effect Size Composition\n(Cohen\'s d)', fontweight='bold', fontsize=12)
+            ax5.set_title('Effect Size Composition\n(Cohen\'s d)', fontweight='bold', fontsize=6)
         else:
             ax5.text(0.5, 0.5, 'No effect size data', ha='center', va='center', 
-                    transform=ax5.transAxes, fontsize=12)
-            ax5.set_title('Effect Size Composition', fontweight='bold', fontsize=12)
+                    transform=ax5.transAxes, fontsize=8)
+            ax5.set_title('Effect Size Composition', fontweight='bold', fontsize=6)
         
         # 6. Data points distribution (middle-right)
         ax6 = fig.add_subplot(gs[1, 2])
@@ -951,10 +951,10 @@ class MetricComparator:
         ax6.bar(x_pos - width/2, normal_points, width, label='Normal', alpha=0.7, color='#4a69bd')
         ax6.bar(x_pos + width/2, fault_points, width, label='Fault', alpha=0.7, color='#e55039')
         
-        ax6.set_xlabel('Metric Index', fontweight='bold')
-        ax6.set_ylabel('Number of Data Points', fontweight='bold')
-        ax6.set_title('Data Points Distribution\nper Metric', fontweight='bold', fontsize=12)
-        ax6.legend()
+        ax6.set_xlabel('Metric Index', fontweight='bold', fontsize=6)
+        ax6.set_ylabel('Number of Data Points', fontweight='bold', fontsize=6)
+        ax6.set_title('Data Points Distribution\nper Metric', fontweight='bold', fontsize=6)
+        ax6.legend(fontsize=6)
         ax6.grid(alpha=0.3)
         
         # Add summary statistics
@@ -962,7 +962,7 @@ class MetricComparator:
         ax6.text(0.95, 0.95, data_stats, transform=ax6.transAxes, 
                 verticalalignment='top', horizontalalignment='right',
                 bbox=dict(boxstyle='round', facecolor='white', alpha=0.8),
-                fontsize=9)
+                fontsize=6)
         
         # 7. Detailed summary text (bottom span)
         ax7 = fig.add_subplot(gs[2, :])
@@ -994,7 +994,7 @@ class MetricComparator:
         else:
             summary_text = "No summary data available"
         
-        ax7.text(0.02, 0.5, summary_text, transform=ax7.transAxes, fontsize=11,
+        ax7.text(0.02, 0.5, summary_text, transform=ax7.transAxes, fontsize=8,
                 verticalalignment='center', horizontalalignment='left',
                 bbox=dict(boxstyle='round', facecolor='lightgray', alpha=0.3),
                 fontfamily='monospace')
@@ -1002,7 +1002,7 @@ class MetricComparator:
         # Add footer
         fig.text(0.5, 0.02, 
                 f'Metric Comparison Analysis | Generated on {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}',
-                ha='center', fontsize=10, style='italic', alpha=0.7)
+                ha='center', fontsize=8, style='italic', alpha=0.5)
         
         plt.tight_layout()
         plt.subplots_adjust(top=0.90, bottom=0.08)
