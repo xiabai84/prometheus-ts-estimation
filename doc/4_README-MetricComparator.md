@@ -11,6 +11,8 @@ Code example：
 normal_df = pd.DataFrame(normal_data)
 fault_df = pd.DataFrame(fault_data)
 
+comparator = MetricComparator()
+
 comparator.prepare_data(
     normal_df=normal_df,
     fault_df=fault_df,
