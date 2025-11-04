@@ -9,10 +9,9 @@ The current library includes the following features.
 [PrometheusDataProfiler](./doc/2_README-ProfilingPipelineDirector.md)
 
 ## 3 Perform anomaly detection analysis on time-series data of specific metrics
-[PrometheusDataProfiler](./doc/3_README-MetricProfilClustering.md)
-
+[MetricProfileClustering](./doc/3_README-MetricProfileClustering.md)
 ## 4 Conduct comparative statistical analysis of metrics from two different time periods for the same application indicators
-[PrometheusDataProfiler](./doc/4_README-MetricComparator.md)
+[MetricComparator](./doc/4_README-MetricComparator.md)
 
 ## 5 Perform correlation analysis on pre-failure service metrics
-[PrometheusDataProfiler](./doc/5_README-DTWClustering.md)
+[DTWClustering](./doc/5_README-DTWClustering.md)
