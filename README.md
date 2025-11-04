@@ -6,7 +6,7 @@ The current library includes the following features.
 [PrometheusDataProfiler](./doc/1_README-PrometheusDataProfiler.md)
 
 ## 2 Generate separate reports for multiple metrics simultaneously
-[PrometheusDataProfiler](./doc/2_README-ProfilingPipelineDirector.md)
+[ProfilingPipelineDirector](./doc/2_README-ProfilingPipelineDirector.md)
 
 ## 3 Perform anomaly detection analysis on time-series data of specific metrics
 [MetricProfileClustering](./doc/3_README-MetricProfileClustering.md)
