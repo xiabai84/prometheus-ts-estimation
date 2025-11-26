@@ -4,8 +4,8 @@ from typing import List, Dict, Set, Any, Optional, Tuple
 
 class LogExtractor:
     """
-    Complete library for extracting exceptions and errors from text logs.
-    Includes metadata extraction and prevents overcounting.
+    Fixed library for extracting exceptions and errors from text logs.
+    Prevents double-counting of package names and simple names.
     """
     
     def __init__(self, 
@@ -27,44 +27,28 @@ class LogExtractor:
         self._cache = {}
     
     def _compile_prioritized_patterns(self) -> List[Tuple[re.Pattern, str, int]]:
-        """
-        Compile patterns with priorities to prevent overmatching.
-        Higher priority patterns are processed first.
-        """
+        """Compile patterns with priorities to prevent overmatching."""
         patterns = []
         
-        # Define patterns with priorities (higher number = higher priority)
         base_patterns = [
-            # Highest priority: Full package names in stack traces (most specific)
             (r'at\s+(([a-zA-Z0-9_]+\.)+[A-Z][a-zA-Z0-9_]*(?:Error|Exception))', 'stack_trace_full', 100),
             (r'Caused by:\s*(([a-zA-Z0-9_]+\.)+[A-Z][a-zA-Z0-9_]*(?:Error|Exception))', 'caused_by', 100),
-            
-            # High priority: Code statements
             (r'(?:raise|throw)\s+([a-zA-Z0-9_.]+(?:Error|Exception))', 'raise_throw', 90),
             (r'(?:throws|catch|except)\s+([a-zA-Z0-9_.]+(?:Error|Exception))', 'declaration', 90),
-            
-            # Medium priority: Full package names in messages
             (r'\b(([a-zA-Z0-9_]+\.)+[A-Z][a-zA-Z0-9_]*(?:Error|Exception))(?:\s*:|)', 'package_with_colon', 80),
             (r'\b(([a-zA-Z0-9_]+\.)+[A-Z][a-zA-Z0-9_]*(?:Error|Exception))\b', 'package_general', 70),
-            
-            # Lower priority: Simple exception names
             (r'\b([A-Z][a-zA-Z0-9_]*(?:Error|Exception))(?:\s*:|)', 'simple_with_colon', 60),
             (r'\b([A-Z][a-zA-Z0-9_]*(?:Error|Exception))\b', 'simple_general', 50),
-            
-            # Context patterns (lowest priority)
             (r'(?:Exception|Error):\s*[^\n]+', 'exception_description', 40),
         ]
         
-        # Compile base patterns
         for pattern, pattern_type, priority in base_patterns:
             try:
                 compiled = re.compile(pattern, re.IGNORECASE)
                 patterns.append((compiled, pattern_type, priority))
-            except re.error as e:
-                print(f"Warning: Failed to compile pattern '{pattern}': {e}")
+            except re.error:
                 continue
         
-        # Add keyword patterns with medium priority
         for keyword in self.keywords:
             try:
                 pattern = r'\b' + re.escape(keyword) + r'\b'
@@ -73,21 +57,11 @@ class LogExtractor:
             except re.error:
                 continue
         
-        # Sort by priority (highest first)
         patterns.sort(key=lambda x: x[2], reverse=True)
         return patterns
     
     def extract_from_text(self, text: str, use_cache: bool = True) -> List[str]:
-        """
-        Extract exceptions without duplicates using pattern prioritization.
-        
-        Args:
-            text: Input text to analyze
-            use_cache: Whether to use caching
-            
-        Returns:
-            List of unique exception/error names found
-        """
+        """Extract exceptions without duplicates."""
         if use_cache and text in self._cache:
             return self._cache[text]
         
@@ -109,10 +83,9 @@ class LogExtractor:
                     extracted = self._extract_from_description_safe(match.group())
                     findings.update(extracted)
                 else:
-                    names = self._extract_names_from_match(match, pattern_type)
-                    for name in names:
-                        if name and self._is_valid_exception_or_error_name(name):
-                            findings.add(name)
+                    name = self._extract_primary_name_from_match(match, pattern_type)
+                    if name and self._is_valid_exception_or_error_name(name):
+                        findings.add(name)
         
         result = sorted(list(findings))
         
@@ -123,62 +96,10 @@ class LogExtractor:
         
         return result
     
-    def extract_from_file(self, file_path: str, encoding: str = 'utf-8') -> List[str]:
-        """
-        Extract exceptions and errors from a file.
-        
-        Args:
-            file_path: Path to the file to analyze
-            encoding: File encoding (default: utf-8)
-            
-        Returns:
-            List of unique exception/error names found
-        """
-        try:
-            with open(file_path, 'r', encoding=encoding) as file:
-                content = file.read()
-        except UnicodeDecodeError:
-            with open(file_path, 'r', encoding='latin-1') as file:
-                content = file.read()
-        
-        return self.extract_from_text(content, use_cache=False)
-    
-    def extract_with_metadata(self, text: str) -> Dict[str, Any]:
-        """
-        Extract exceptions with comprehensive metadata.
-        
-        Args:
-            text: Input text to analyze
-            
-        Returns:
-            Dictionary containing findings and metadata
-        """
-        findings = self.extract_from_text(text)
-        frequency = self.analyze_frequency_exact(text)
-        line_occurrences = self.analyze_frequency_by_line(text)
-        categorized = self._categorize_findings(findings)
-        package_analysis = self.get_package_analysis(text)
-        
-        return {
-            'findings': findings,
-            'frequency': frequency,
-            'line_occurrences': line_occurrences,
-            'categorized': categorized,
-            'package_analysis': package_analysis,
-            'summary': {
-                'total_findings': len(findings),
-                'total_occurrences': sum(frequency.values()),
-                'exceptions_count': len(categorized['exceptions']),
-                'errors_count': len(categorized['errors']),
-                'packages_count': len(categorized['package_names']),
-                'keywords_count': len(categorized['keywords']),
-                'simple_names_count': len(categorized['simple_names'])
-            }
-        }
-    
     def analyze_frequency(self, text: str) -> Dict[str, int]:
         """
-        Accurate frequency analysis without overcounting.
+        Fixed frequency analysis without double-counting.
+        Counts each occurrence only once, regardless of package/simple name preference.
         
         Args:
             text: Input text to analyze
@@ -205,66 +126,17 @@ class LogExtractor:
                     for name in extracted:
                         frequency_counter[name] += 1
                 else:
-                    names = self._extract_names_from_match(match, pattern_type)
-                    for name in names:
-                        if name and self._is_valid_exception_or_error_name(name):
-                            if self.prefer_simple_names and '.' in name:
-                                simple_name = name.split('.')[-1]
-                                frequency_counter[simple_name] += 1
-                                if self.include_package_names:
-                                    frequency_counter[name] += 1
-                            else:
-                                frequency_counter[name] += 1
+                    name = self._extract_primary_name_from_match(match, pattern_type)
+                    if name and self._is_valid_exception_or_error_name(name):
+                        # CRITICAL FIX: Only count the primary name once per occurrence
+                        frequency_counter[name] += 1
         
         return dict(frequency_counter.most_common())
-    
-    def analyze_frequency_exact(self, text: str) -> Dict[str, int]:
-        """
-        Exact frequency analysis using extraction-based counting.
-        
-        Args:
-            text: Input text to analyze
-            
-        Returns:
-            Dictionary with exact frequency counts
-        """
-        findings_with_context = self._extract_findings_with_context(text)
-        frequency_counter = Counter()
-        
-        for finding, context in findings_with_context:
-            if self.prefer_simple_names and '.' in finding:
-                simple_name = finding.split('.')[-1]
-                frequency_counter[simple_name] += 1
-                if self.include_package_names:
-                    frequency_counter[finding] += 1
-            else:
-                frequency_counter[finding] += 1
-        
-        return dict(frequency_counter.most_common())
-    
-    def analyze_frequency_by_line(self, text: str) -> Dict[str, List[int]]:
-        """
-        Analyze frequency with line number information.
-        
-        Args:
-            text: Input text to analyze
-            
-        Returns:
-            Dictionary with findings and their line numbers
-        """
-        line_occurrences = defaultdict(list)
-        lines = text.split('\n')
-        
-        for line_num, line in enumerate(lines, 1):
-            findings = self.extract_from_text(line, use_cache=False)
-            for finding in findings:
-                line_occurrences[finding].append(line_num)
-        
-        return dict(line_occurrences)
     
     def analyze_frequency_detailed(self, text: str) -> Dict[str, Dict[str, Any]]:
         """
-        Detailed frequency analysis with additional information.
+        Detailed frequency analysis that shows both package and simple name relationships
+        without double-counting.
         
         Args:
             text: Input text to analyze
@@ -272,46 +144,184 @@ class LogExtractor:
         Returns:
             Dictionary with detailed frequency information
         """
-        basic_frequency = self.analyze_frequency_exact(text)
+        # First, get the actual occurrences with their original forms
+        occurrences = self._extract_occurrences_with_original_forms(text)
+        frequency_counter = Counter()
         package_mappings = self._extract_package_mappings(text)
-        findings = self.extract_from_text(text)
-        categorized = self._categorize_findings(findings)
+        
+        # Count each occurrence only once
+        for original_name, simple_name in occurrences:
+            if self.prefer_simple_names:
+                frequency_counter[simple_name] += 1
+                # Track package names separately without double-counting
+                if self.include_package_names and '.' in original_name:
+                    # Don't count package names as separate occurrences
+                    # Just track that this package name exists for this simple name
+                    pass
+            else:
+                frequency_counter[original_name] += 1
+        
+        # Add package names to the frequency counter for reference (with count 0)
+        if self.include_package_names:
+            for simple_name, packages in package_mappings.items():
+                for package_name in packages:
+                    if package_name not in frequency_counter:
+                        frequency_counter[package_name] = 0
         
         detailed_frequency = {}
-        total_occurrences = sum(basic_frequency.values())
+        total_occurrences = sum(frequency_counter.values())
         
-        for item, count in basic_frequency.items():
+        for item, count in frequency_counter.items():
             is_package_name = '.' in item
             simple_name = item.split('.')[-1] if is_package_name else item
-            
-            related_names = []
-            if is_package_name:
-                related_names.append(simple_name)
-            elif simple_name in package_mappings:
-                related_names.extend(package_mappings[simple_name])
             
             detailed_frequency[item] = {
                 'count': count,
                 'is_package_name': is_package_name,
                 'simple_name': simple_name,
-                'related_names': related_names,
-                'category': self._categorize_single_item(item, categorized),
+                'related_names': package_mappings.get(simple_name, []),
                 'percentage': round((count / total_occurrences * 100), 2) if total_occurrences > 0 else 0,
-                'full_package_names': package_mappings.get(simple_name, [])
             }
         
         return detailed_frequency
     
-    def get_package_analysis(self, text: str) -> Dict[str, Any]:
+    def _extract_occurrences_with_original_forms(self, text: str) -> List[Tuple[str, str]]:
         """
-        Comprehensive package name analysis.
+        Extract all occurrences with their original forms and corresponding simple names.
         
         Args:
             text: Text to analyze
             
         Returns:
-            Dictionary with package analysis information
+            List of tuples (original_name, simple_name)
         """
+        occurrences = []
+        processed_positions = set()
+        
+        for pattern, pattern_type, priority in self._compiled_patterns:
+            for match in pattern.finditer(text):
+                start_pos, end_pos = match.span()
+                
+                if self._is_position_processed(start_pos, end_pos, processed_positions):
+                    continue
+                
+                processed_positions.add((start_pos, end_pos))
+                
+                if pattern_type.startswith('keyword_'):
+                    original_name = match.group().capitalize()
+                    occurrences.append((original_name, original_name))
+                elif pattern_type == 'exception_description':
+                    extracted = self._extract_from_description_safe(match.group())
+                    for name in extracted:
+                        simple_name = name.split('.')[-1] if '.' in name else name
+                        occurrences.append((name, simple_name))
+                else:
+                    original_name = self._extract_original_name_from_match(match, pattern_type)
+                    if original_name and self._is_valid_exception_or_error_name(original_name):
+                        simple_name = original_name.split('.')[-1] if '.' in original_name else original_name
+                        occurrences.append((original_name, simple_name))
+        
+        return occurrences
+    
+    def _extract_primary_name_from_match(self, match: re.Match, pattern_type: str) -> str:
+        """
+        Extract the primary name for counting - avoids double-counting.
+        
+        Args:
+            match: Regex match object
+            pattern_type: Type of pattern that matched
+            
+        Returns:
+            Primary name to count (either package name or simple name based on preference)
+        """
+        original_name = self._extract_original_name_from_match(match, pattern_type)
+        
+        if not original_name:
+            return ""
+        
+        # Apply naming preference without creating multiple counts
+        if self.prefer_simple_names and '.' in original_name:
+            return original_name.split('.')[-1]  # Return simple name only
+        else:
+            return original_name  # Return original name (could be package or simple)
+    
+    def _extract_original_name_from_match(self, match: re.Match, pattern_type: str) -> str:
+        """
+        Extract the original name as it appears in the text.
+        
+        Args:
+            match: Regex match object
+            pattern_type: Type of pattern that matched
+            
+        Returns:
+            Original exception name as found in text
+        """
+        matched_text = match.group()
+        groups = match.groups()
+        
+        if pattern_type in ['stack_trace_full', 'caused_by']:
+            return groups[0] if groups else matched_text
+        elif pattern_type in ['raise_throw', 'declaration']:
+            return groups[0] if groups else matched_text.split()[-1]
+        elif pattern_type in ['package_with_colon', 'package_general']:
+            return groups[0] if groups else matched_text
+        elif pattern_type in ['simple_with_colon', 'simple_general']:
+            return groups[0] if groups else matched_text
+        else:
+            return matched_text
+    
+    def extract_with_metadata(self, text: str) -> Dict[str, Any]:
+        """
+        Extract exceptions with comprehensive metadata.
+        Fixed to prevent double-counting in frequency analysis.
+        
+        Args:
+            text: Input text to analyze
+            
+        Returns:
+            Dictionary containing findings and metadata
+        """
+        findings = self.extract_from_text(text)
+        frequency = self.analyze_frequency(text)  # Use the fixed frequency analysis
+        line_occurrences = self.analyze_frequency_by_line(text)
+        categorized = self._categorize_findings(findings)
+        package_analysis = self.get_package_analysis(text)
+        detailed_frequency = self.analyze_frequency_detailed(text)
+        
+        return {
+            'findings': findings,
+            'frequency': frequency,
+            'detailed_frequency': detailed_frequency,
+            'line_occurrences': line_occurrences,
+            'categorized': categorized,
+            'package_analysis': package_analysis,
+            'summary': {
+                'total_findings': len(findings),
+                'total_occurrences': sum(frequency.values()),  # This will now be accurate
+                'exceptions_count': len(categorized['exceptions']),
+                'errors_count': len(categorized['errors']),
+                'packages_count': len(categorized['package_names']),
+                'keywords_count': len(categorized['keywords']),
+                'simple_names_count': len(categorized['simple_names'])
+            }
+        }
+    
+    def analyze_frequency_by_line(self, text: str) -> Dict[str, List[int]]:
+        """Analyze frequency with line number information."""
+        line_occurrences = defaultdict(list)
+        lines = text.split('\n')
+        
+        for line_num, line in enumerate(lines, 1):
+            # Use the same logic as analyze_frequency but per line
+            line_frequency = self.analyze_frequency(line)
+            for finding, count in line_frequency.items():
+                for _ in range(count):
+                    line_occurrences[finding].append(line_num)
+        
+        return dict(line_occurrences)
+    
+    def get_package_analysis(self, text: str) -> Dict[str, Any]:
+        """Comprehensive package name analysis."""
         findings = self.extract_from_text(text)
         package_mappings = self._extract_package_mappings(text)
         
@@ -352,73 +362,9 @@ class LogExtractor:
                 return True
         return False
     
-    def _extract_findings_with_context(self, text: str) -> List[Tuple[str, str]]:
-        """Extract findings with their context for accurate counting."""
-        findings_with_context = []
-        processed_positions = set()
-        
-        for pattern, pattern_type, priority in self._compiled_patterns:
-            for match in pattern.finditer(text):
-                start_pos, end_pos = match.span()
-                
-                if self._is_position_processed(start_pos, end_pos, processed_positions):
-                    continue
-                
-                processed_positions.add((start_pos, end_pos))
-                
-                if pattern_type.startswith('keyword_'):
-                    findings_with_context.append((match.group().capitalize(), pattern_type))
-                elif pattern_type == 'exception_description':
-                    extracted = self._extract_from_description_safe(match.group())
-                    for name in extracted:
-                        findings_with_context.append((name, pattern_type))
-                else:
-                    names = self._extract_names_from_match(match, pattern_type)
-                    for name in names:
-                        if name and self._is_valid_exception_or_error_name(name):
-                            findings_with_context.append((name, pattern_type))
-        
-        return findings_with_context
-    
-    def _extract_names_from_match(self, match: re.Match, pattern_type: str) -> List[str]:
-        """Extract names from match based on pattern type."""
-        matched_text = match.group()
-        groups = match.groups()
-        
-        if pattern_type in ['stack_trace_full', 'caused_by']:
-            full_name = groups[0] if groups else matched_text
-            return self._get_name_variants(full_name)
-        
-        elif pattern_type in ['raise_throw', 'declaration']:
-            exception_name = groups[0] if groups else matched_text.split()[-1]
-            return self._get_name_variants(exception_name)
-        
-        elif pattern_type in ['package_with_colon', 'package_general']:
-            full_name = groups[0] if groups else matched_text
-            return self._get_name_variants(full_name)
-        
-        elif pattern_type in ['simple_with_colon', 'simple_general']:
-            simple_name = groups[0] if groups else matched_text
-            return [simple_name]
-        
-        return [matched_text]
-    
-    def _get_name_variants(self, name: str) -> List[str]:
-        """Get both full and simple name variants."""
-        if '.' in name:
-            full_name = name
-            simple_name = name.split('.')[-1]
-            if self.prefer_simple_names:
-                return [simple_name, full_name] if self.include_package_names else [simple_name]
-            else:
-                return [full_name, simple_name]
-        else:
-            return [name]
-    
     def _extract_from_description_safe(self, description: str) -> Set[str]:
-        """Safe extraction from descriptions without overcounting."""
+        """Safe extraction from descriptions."""
         findings = set()
-        
         exception_pattern = re.compile(r'\b([A-Z][a-zA-Z0-9_]*(?:Error|Exception))\b')
         package_pattern = re.compile(r'\b(([a-zA-Z0-9_]+\.)+[A-Z][a-zA-Z0-9_]*(?:Error|Exception))\b')
         
@@ -486,19 +432,6 @@ class LogExtractor:
             categories[category] = sorted(list(set(categories[category])))
         
         return categories
-    
-    def _categorize_single_item(self, item: str, categorized: Dict[str, List[str]]) -> str:
-        """Categorize a single item."""
-        if item in categorized['package_names']:
-            return 'package_name'
-        elif item in categorized['exceptions']:
-            return 'exception'
-        elif item in categorized['errors']:
-            return 'error'
-        elif item in categorized['keywords']:
-            return 'keyword'
-        else:
-            return 'simple_name'
     
     def _is_valid_exception_or_error_name(self, name: str) -> bool:
         """Validation that handles both package and simple names."""
