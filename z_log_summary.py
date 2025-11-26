@@ -1,154 +1,187 @@
 import re
 from collections import Counter
-import argparse
 
-def extract_exceptions_from_file(file_path):
+def extract_exceptions_and_errors_enhanced(text):
     """
-    Extract all different types of exceptions from a txt file
-    
-    Args:
-        file_path (str): Path to the text file
-        
-    Returns:
-        list: List containing different exception types
+    Enhanced extraction for both exceptions and error-related information
     """
-    try:
-        with open(file_path, 'r', encoding='utf-8') as file:
-            content = file.read()
-    except UnicodeDecodeError:
-        # If utf-8 decoding fails, try other encodings
-        with open(file_path, 'r', encoding='latin-1') as file:
-            content = file.read()
-    
-    return extract_exceptions_from_text(content)
-
-def extract_exceptions_from_text(text):
-    """
-    Extract all different types of exceptions from text
-    
-    Args:
-        text (str): Input text content
-        
-    Returns:
-        list: List containing different exception types
-    """
-    # Define regex patterns to match exceptions
-    # Match common exception formats like: Exception, ValueError, FileNotFoundError, etc.
     patterns = [
-        r'Exception:\s*([^\n]+)',  # Exception: specific description
-        r'(\w+Error):',  # ValueError: etc.
-        r'(\w+Exception):',  # FileNotFoundException: etc.
-        r'at\s+.*?(\w+Error)',  # Errors in stack traces
-        r'at\s+.*?(\w+Exception)',  # Exceptions in stack traces
-        r'raise\s+(\w+)',  # raise statements
-        r'catch\s*\((\w+)\s+\w+\)',  # catch statements
-        r'except\s+(\w+)',  # except statements
+        # Exception patterns
+        (r'(\b\w*?Error\b):', 'error_suffix'),
+        (r'(\b\w*?Exception\b):', 'exception_suffix'),
+        (r'(\bException\b):', 'generic_exception'),
+        (r'at\s+.*?(\b\w*?Error\b)', 'stack_error'),
+        (r'at\s+.*?(\b\w*?Exception\b)', 'stack_exception'),
+        (r'at\s+.*?(\bException\b)', 'stack_generic'),
+        (r'raise\s+(\w+)', 'raise_stmt'),
+        (r'catch\s*\((\w+)\s+\w+\)', 'catch_stmt'),
+        (r'except\s+(\w+)', 'except_stmt'),
+        (r'throws\s+(\w+)', 'throws_decl'),
+        (r'throw new\s+(\w+)', 'throw_new'),
+        (r'class\s+(\w+.*Exception)', 'class_def'),
+        
+        # Error-specific patterns (NEW)
+        (r'(\b\w*?Error\b)\s', 'error_standalone'),
+        (r'ERROR:\s*(\w*?Error)', 'error_prefix'),
+        (r'error:\s*(\w*?Error)', 'error_lower_prefix'),
+        (r'(\bError\b):', 'generic_error'),
+        (r'(\bRuntimeError\b)', 'runtime_error'),
+        (r'(\bAssertionError\b)', 'assertion_error'),
     ]
     
-    exceptions = set()
+    exceptions_and_errors = set()
     
-    for pattern in patterns:
+    for pattern, pattern_type in patterns:
         matches = re.findall(pattern, text, re.IGNORECASE)
         for match in matches:
-            # Clean and standardize exception names
-            exception_name = match.strip()
-            if exception_name and ('error' in exception_name.lower() or 
-                                 'exception' in exception_name.lower()):
-                exceptions.add(exception_name)
+            name = match.strip()
+            
+            if is_valid_exception_or_error_name(name):
+                exceptions_and_errors.add(name)
     
-    # Additional processing: Find lines containing Exception or Error
+    # Additional processing for error messages and contexts
+    error_contexts = extract_error_contexts(text)
+    exceptions_and_errors.update(error_contexts)
+    
+    return sorted(list(exceptions_and_errors))
+
+def is_valid_exception_or_error_name(name):
+    """
+    Check if the extracted name is likely a valid exception or error name
+    """
+    if not name or len(name) < 3:
+        return False
+    
+    # Common non-exception words to exclude
+    exclude_words = {
+        'the', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 
+        'with', 'from', 'by', 'as', 'is', 'are', 'was', 'were'
+    }
+    if name.lower() in exclude_words:
+        return False
+    
+    # Must contain Error, Exception, or be a known generic exception/error
+    valid_keywords = ['error', 'exception', 'throw', 'catch', 'raise', 'fail']
+    if any(keyword in name.lower() for keyword in valid_keywords):
+        return True
+    
+    # Common generic exception and error names
+    generic_names = {
+        'Exception', 'Error', 'Throwable', 'RuntimeException',
+        'RuntimeError', 'AssertionError', 'SystemError'
+    }
+    if name in generic_names:
+        return True
+    
+    # Pattern-based validation
+    if (name.endswith('Error') or name.endswith('Exception') or 
+        name == 'Exception' or name == 'Error' or
+        name.startswith('Err') or 'Fail' in name):
+        return True
+    
+    # CamelCase validation for custom exceptions/errors
+    if re.match(r'^[A-Z][a-zA-Z]*(Error|Exception|Fail)', name):
+        return True
+    
+    return False
+
+def extract_error_contexts(text):
+    """
+    Extract additional error-related information from context
+    """
+    error_contexts = set()
     lines = text.split('\n')
+    
     for line in lines:
-        if 'exception' in line.lower() or 'error' in line.lower():
-            # Try to extract more specific exception names from the line
-            words = re.findall(r'[A-Z][a-zA-Z]*(?:Error|Exception)', line)
-            for word in words:
-                exceptions.add(word)
-    
-    return sorted(list(exceptions))
-
-def analyze_exception_frequency(text):
-    """
-    Analyze the frequency of exception occurrences
-    
-    Args:
-        text (str): Input text content
+        # Look for error severity levels
+        if re.search(r'\b(ERROR|Error|error)\b', line):
+            # Extract potential error types from error lines
+            error_matches = re.findall(r'(\b\w*?Error\b|\b\w*?Exception\b)', line)
+            for match in error_matches:
+                if is_valid_exception_or_error_name(match):
+                    error_contexts.add(match)
         
-    Returns:
-        Counter: Counter containing exception occurrence counts
-    """
-    # Pattern to match exception names
-    pattern = r'[A-Z][a-zA-Z]*(?:Error|Exception)'
-    exceptions = re.findall(pattern, text)
+        # Look for error codes or specific error patterns
+        error_code_match = re.search(r'error[:\s]*([A-Z][a-zA-Z]*)', line, re.IGNORECASE)
+        if error_code_match:
+            potential_error = error_code_match.group(1)
+            if is_valid_exception_or_error_name(potential_error):
+                error_contexts.add(potential_error)
     
-    return Counter(exceptions)
+    return error_contexts
 
-def main():
-    parser = argparse.ArgumentParser(description='Extract different types of exceptions from txt document')
-    parser.add_argument('file_path', help='Path to the txt file to analyze')
-    parser.add_argument('--frequency', '-f', action='store_true', 
-                       help='Show exception frequency')
+def categorize_findings(findings):
+    """
+    Categorize the extracted findings into exceptions and errors
+    """
+    exceptions = []
+    errors = []
+    others = []
     
-    args = parser.parse_args()
+    for finding in findings:
+        finding_lower = finding.lower()
+        if 'exception' in finding_lower:
+            exceptions.append(finding)
+        elif 'error' in finding_lower:
+            errors.append(finding)
+        else:
+            others.append(finding)
     
-    try:
-        # Extract exception types
-        exceptions = extract_exceptions_from_file(args.file_path)
-        
-        print(f"Found {len(exceptions)} different exception types in file '{args.file_path}':")
-        print("-" * 50)
-        
-        for i, exception in enumerate(exceptions, 1):
-            print(f"{i:2d}. {exception}")
-        
-        # If frequency display is requested
-        if args.frequency:
-            print("\n" + "=" * 50)
-            print("Exception Frequency Analysis:")
-            print("-" * 50)
-            
-            with open(args.file_path, 'r', encoding='utf-8') as file:
-                content = file.read()
-            
-            freq = analyze_exception_frequency(content)
-            for exception, count in freq.most_common():
-                print(f"{exception}: {count} times")
-                
-    except FileNotFoundError:
-        print(f"Error: File '{args.file_path}' not found")
-    except Exception as e:
-        print(f"Error processing file: {e}")
+    return {
+        'exceptions': sorted(exceptions),
+        'errors': sorted(errors),
+        'others': sorted(others)
+    }
 
-# Example function for direct use
-def process_text_directly():
-    """
-    Example of directly processing text content
-    """
-    # Sample text
-    sample_text = """
-    2023-10-01 10:00:00 ERROR: FileNotFoundError: File does not exist
-    2023-10-01 10:01:00 INFO: Program execution started
-    2023-10-01 10:02:00 ERROR: ValueError: Invalid parameter
-    2023-10-01 10:03:00 WARNING: High memory usage
-    2023-10-01 10:04:00 ERROR: ConnectionError: Connection failed
-    2023-10-01 10:05:00 Exception: Unknown exception occurred
-    2023-10-01 10:06:00 at java.lang.NullPointerException
-    2023-10-01 10:07:00 raise TypeError
-    """
-    
-    exceptions = extract_exceptions_from_text(sample_text)
-    print("Exception types extracted from sample text:")
-    for exception in exceptions:
-        print(f"  - {exception}")
+# Test with comprehensive text containing both exceptions and errors
+test_text = """
+2023-10-01 10:00:00 ERROR: FileNotFoundError: File not found
+2023-10-01 10:01:00 INFO: Process started successfully
+2023-10-01 10:02:00 ERROR: Exception: Generic exception occurred
+2023-10-01 10:03:00 at java.lang.Exception: Some stack trace
+2023-10-01 10:04:00 raise ValueError("Invalid value")
+2023-10-01 10:05:00 catch (IOException e)
+2023-10-01 10:06:00 except RuntimeError:
+2023-10-01 10:07:00 CustomException: Custom error message
+2023-10-01 10:08:00 throws SQLException
+2023-10-01 10:09:00 throw new IllegalArgumentException("Invalid argument")
+2023-10-01 10:10:00 ERROR: ConnectionError: Failed to connect
+2023-10-01 10:11:00 error: ValidationError: Invalid input data
+2023-10-01 10:12:00 RuntimeError: Unexpected runtime issue
+2023-10-01 10:13:00 AssertionError: Assertion failed
+2023-10-01 10:14:00 SystemError: System level error
+2023-10-01 10:15:00 Some random text without errors
+2023-10-01 10:16:00 Error: Generic error without specific type
+2023-10-01 10:17:00 at com.example.NetworkError: Network operation failed
+"""
 
-if __name__ == "__main__":
-    # If running the script directly, show usage examples
-    print("Exception Extraction Tool")
-    print("Usage methods:")
-    print("1. Command line: python script.py your_log_file.txt")
-    print("2. Call in code: extract_exceptions_from_file('your_file.txt')")
-    print("\nExample:")
-    process_text_directly()
-    
-    # Uncomment below if you need to run from command line arguments
-    # main()
+# Extract all findings
+findings = extract_exceptions_and_errors_enhanced(test_text)
+
+# Categorize the findings
+categorized = categorize_findings(findings)
+
+# Print results
+print("ALL FINDINGS:")
+for finding in findings:
+    print(f"  - {finding}")
+
+print("\nCATEGORIZED RESULTS:")
+print("Exceptions:")
+for exc in categorized['exceptions']:
+    print(f"  - {exc}")
+
+print("\nErrors:")
+for err in categorized['errors']:
+    print(f"  - {err}")
+
+print("\nOthers:")
+for other in categorized['others']:
+    print(f"  - {other}")
+
+# Additional analysis
+print(f"\nSUMMARY:")
+print(f"Total findings: {len(findings)}")
+print(f"Exceptions: {len(categorized['exceptions'])}")
+print(f"Errors: {len(categorized['errors'])}")
+print(f"Others: {len(categorized['others'])}")
