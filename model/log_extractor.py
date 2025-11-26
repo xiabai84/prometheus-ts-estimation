@@ -9,19 +9,16 @@ class LogExtractor:
     
     def __init__(self, 
                  include_package_names: bool = True, 
-                 include_keywords: bool = True,
-                 custom_keywords: Optional[List[str]] = None):
+                 keywords: Optional[List[str]] = None):
         """
         Initialize the LogExtractor.
         
         Args:
             include_package_names: Whether to include full package paths
-            include_keywords: Whether to include generic 'exception'/'error' keywords
-            custom_keywords: Additional custom keywords to search for
+            keywords: List of keywords to search for (includes both exception keywords and custom keywords)
         """
         self.include_package_names = include_package_names
-        self.include_keywords = include_keywords
-        self.custom_keywords = custom_keywords or []
+        self.keywords = keywords or []
         self._patterns = self._compile_patterns()
     
     def _compile_patterns(self) -> List[tuple]:
@@ -50,63 +47,65 @@ class LogExtractor:
             (r'class\s+([a-zA-Z0-9_.]*Exception)', 'class_def'),
         ]
         
-        # Add keyword patterns if enabled
-        if self.include_keywords:
-            patterns.extend([
-                (r'\b(exception)\b', 'keyword_exception'),
-                (r'\b(error)\b', 'keyword_error'),
-            ])
-        
-        # Add custom keyword patterns
-        for keyword in self.custom_keywords:
-            # Escape special regex characters in custom keywords
+        # Add keyword patterns for all keywords
+        for keyword in self.keywords:
+            # Escape special regex characters in keywords
             escaped_keyword = re.escape(keyword.lower())
             patterns.append(
-                (fr'\b({escaped_keyword})\b', f'custom_keyword_{keyword}')
+                (fr'\b({escaped_keyword})\b', f'keyword_{keyword}')
             )
         
         return patterns
     
     def update_keywords(self, new_keywords: List[str]) -> None:
         """
-        Update the custom keywords and recompile patterns.
+        Update the keywords and recompile patterns.
         
         Args:
-            new_keywords: New list of custom keywords to search for
+            new_keywords: New list of keywords to search for
         """
-        self.custom_keywords = new_keywords
+        self.keywords = new_keywords
         self._patterns = self._compile_patterns()
     
     def add_keyword(self, keyword: str) -> None:
         """
-        Add a single keyword to the custom keywords list.
+        Add a single keyword to the keywords list.
         
         Args:
             keyword: Keyword to add
         """
-        if keyword not in self.custom_keywords:
-            self.custom_keywords.append(keyword)
+        if keyword not in self.keywords:
+            self.keywords.append(keyword)
             self._patterns = self._compile_patterns()
     
     def remove_keyword(self, keyword: str) -> None:
         """
-        Remove a keyword from the custom keywords list.
+        Remove a keyword from the keywords list.
         
         Args:
             keyword: Keyword to remove
         """
-        if keyword in self.custom_keywords:
-            self.custom_keywords.remove(keyword)
+        if keyword in self.keywords:
+            self.keywords.remove(keyword)
             self._patterns = self._compile_patterns()
     
     def get_keywords(self) -> List[str]:
         """
-        Get the current list of custom keywords.
+        Get the current list of keywords.
         
         Returns:
-            List of custom keywords
+            List of keywords
         """
-        return self.custom_keywords.copy()
+        return self.keywords.copy()
+    
+    def has_keywords(self) -> bool:
+        """
+        Check if any keywords are configured.
+        
+        Returns:
+            True if keywords are configured, False otherwise
+        """
+        return len(self.keywords) > 0
     
     def extract_from_text(self, text: str) -> List[str]:
         """
@@ -123,7 +122,7 @@ class LogExtractor:
         for pattern, pattern_type in self._patterns:
             matches = re.findall(pattern, text, re.IGNORECASE)
             for match in matches:
-                if pattern_type.startswith('keyword_') or pattern_type.startswith('custom_keyword_'):
+                if pattern_type.startswith('keyword_'):
                     # For keyword matches, add the keyword itself
                     findings.add(match.capitalize())
                 elif pattern_type in ['exception_description', 'error_description']:
@@ -134,13 +133,9 @@ class LogExtractor:
                     if self._is_valid_exception_or_error_name(name):
                         findings.add(name)
         
-        # Additional processing
-        keyword_findings = self._extract_from_keyword_context(text)
-        findings.update(keyword_findings)
-        
-        # Add custom keywords that are found in text
-        custom_keyword_findings = self._extract_custom_keywords(text)
-        findings.update(custom_keyword_findings)
+        # Additional processing for context-based extraction
+        context_findings = self._extract_from_context(text)
+        findings.update(context_findings)
         
         return sorted(list(findings))
     
@@ -186,14 +181,13 @@ class LogExtractor:
                 'exceptions_count': len(categorized['exceptions']),
                 'errors_count': len(categorized['errors']),
                 'packages_count': len(categorized['packages']),
-                'keywords_count': len(categorized['keywords']),
-                'custom_keywords_count': len(categorized['custom_keywords'])
+                'keywords_count': len(categorized['keywords'])
             }
         }
     
     def analyze_frequency(self, text: str) -> Dict[str, int]:
         """
-        Analyze frequency of each exception/error in the text.
+        Analyze frequency of each exception/error/keyword in the text.
         
         Args:
             text: Input text to analyze
@@ -201,21 +195,82 @@ class LogExtractor:
         Returns:
             Dictionary with exception/error names and their counts
         """
-        findings = self.extract_from_text(text)
         frequency = {}
         
-        for finding in findings:
-            # Count occurrences of each finding
-            if '.' in finding:
-                # For package names, use simple name for counting
-                simple_name = finding.split('.')[-1]
-                count = len(re.findall(re.escape(finding), text))
-                frequency[simple_name] = frequency.get(simple_name, 0) + count
-            else:
-                count = len(re.findall(re.escape(finding), text))
-                frequency[finding] = count
+        # Count exceptions and errors
+        for pattern, pattern_type in self._patterns:
+            if pattern_type.startswith('keyword_'):
+                # Handle keywords separately
+                continue
+            
+            matches = re.findall(pattern, text, re.IGNORECASE)
+            for match in matches:
+                if pattern_type in ['exception_description', 'error_description']:
+                    # Extract and count from descriptions
+                    extracted = self._extract_from_description(match)
+                    for name in extracted:
+                        count = len(re.findall(re.escape(name), text))
+                        frequency[name] = frequency.get(name, 0) + count
+                else:
+                    name = match.strip()
+                    if self._is_valid_exception_or_error_name(name):
+                        if '.' in name:
+                            # For package names, use simple name for counting
+                            simple_name = name.split('.')[-1]
+                            count = len(re.findall(re.escape(name), text))
+                            frequency[simple_name] = frequency.get(simple_name, 0) + count
+                        else:
+                            count = len(re.findall(re.escape(name), text))
+                            frequency[name] = frequency.get(name, 0) + count
+        
+        # Count keywords with exact word matching
+        for keyword in self.keywords:
+            # Use word boundaries to count exact matches
+            pattern = r'\b' + re.escape(keyword) + r'\b'
+            count = len(re.findall(pattern, text, re.IGNORECASE))
+            if count > 0:
+                frequency[keyword.capitalize()] = count
         
         return dict(sorted(frequency.items(), key=lambda x: x[1], reverse=True))
+    
+    def analyze_frequency_detailed(self, text: str) -> Dict[str, Dict[str, Any]]:
+        """
+        Analyze frequency with detailed information including categories.
+        
+        Args:
+            text: Input text to analyze
+            
+        Returns:
+            Dictionary with detailed frequency information
+        """
+        basic_frequency = self.analyze_frequency(text)
+        findings = self.extract_from_text(text)
+        categorized = self._categorize_findings_detailed(findings)
+        
+        detailed_frequency = {}
+        total_words = len(text.split())
+        
+        for item, count in basic_frequency.items():
+            category = self._categorize_single_item(item, categorized)
+            detailed_frequency[item] = {
+                'count': count,
+                'category': category
+            }
+        
+        return detailed_frequency
+    
+    def _categorize_single_item(self, item: str, categorized: Dict[str, List[str]]) -> str:
+        """Categorize a single item."""
+        if item in categorized['keywords']:
+            return 'keyword'
+        elif item in categorized['exceptions']:
+            return 'exception'
+        elif item in categorized['errors']:
+            return 'error'
+        elif item in categorized['packages']:
+            return 'package'
+        else:
+            return 'unknown'
     
     def _extract_from_description(self, description: str) -> Set[str]:
         """Extract potential exception names from descriptions."""
@@ -228,22 +283,18 @@ class LogExtractor:
         
         return findings
     
-    def _extract_from_keyword_context(self, text: str) -> Set[str]:
-        """Extract findings from lines containing exception/error keywords."""
+    def _extract_from_context(self, text: str) -> Set[str]:
+        """Extract findings from context including keywords and package names."""
         findings = set()
         lines = text.split('\n')
         
         for line in lines:
             line_lower = line.lower()
             
-            # Generic keyword detection
-            if self.include_keywords:
-                if ('exception' in line_lower and 
-                    not re.search(r'[A-Z][a-zA-Z]*(?:Error|Exception)', line)):
-                    findings.add('Exception')
-                if ('error' in line_lower and 
-                    not re.search(r'[A-Z][a-zA-Z]*(?:Error|Exception)', line)):
-                    findings.add('Error')
+            # Extract keywords from context
+            for keyword in self.keywords:
+                if re.search(r'\b' + re.escape(keyword) + r'\b', line, re.IGNORECASE):
+                    findings.add(keyword.capitalize())
             
             # Extract full package paths
             if self.include_package_names:
@@ -253,17 +304,6 @@ class LogExtractor:
                 for match in package_matches:
                     if self._is_valid_exception_or_error_name(match):
                         findings.add(match)
-        
-        return findings
-    
-    def _extract_custom_keywords(self, text: str) -> Set[str]:
-        """Extract custom keywords from text."""
-        findings = set()
-        
-        for keyword in self.custom_keywords:
-            # Case-insensitive search for custom keywords
-            if re.search(r'\b' + re.escape(keyword) + r'\b', text, re.IGNORECASE):
-                findings.add(keyword.capitalize())
         
         return findings
     
@@ -281,14 +321,11 @@ class LogExtractor:
         if name.lower() in exclude_words:
             return False
         
-        # Allow custom keywords
-        if name.lower() in [kw.lower() for kw in self.custom_keywords]:
+        # Allow configured keywords
+        if name.lower() in [kw.lower() for kw in self.keywords]:
             return True
         
-        # Allow package names and generic keywords
-        if name in ['Exception', 'Error']:
-            return self.include_keywords
-        
+        # Allow package names and generic exception/error patterns
         valid_keywords = ['error', 'exception', 'throw', 'catch', 'raise', 'fail']
         if any(keyword in name.lower() for keyword in valid_keywords):
             return True
@@ -315,36 +352,35 @@ class LogExtractor:
         errors = []
         packages = []
         keywords = []
-        custom_keywords = []
         
         for finding in findings:
             finding_lower = finding.lower()
             
-            # Check if it's a custom keyword first
-            if finding.lower() in [kw.lower() for kw in self.custom_keywords]:
-                custom_keywords.append(finding)
+            # Check if it's a keyword first
+            if finding.lower() in [kw.lower() for kw in self.keywords]:
+                keywords.append(finding)
             elif '.' in finding:
                 packages.append(finding)
-            elif finding in ['Exception', 'Error']:
-                keywords.append(finding)
             elif 'exception' in finding_lower:
                 exceptions.append(finding)
             elif 'error' in finding_lower:
                 errors.append(finding)
             else:
+                # Default to keyword for unmatched items
                 keywords.append(finding)
         
         return {
             'exceptions': sorted(exceptions),
             'errors': sorted(errors),
             'packages': sorted(packages),
-            'keywords': sorted(keywords),
-            'custom_keywords': sorted(custom_keywords)
+            'keywords': sorted(keywords)
         }
     
     def print_report(self, text: str, title: str = "Exception Analysis Report"):
         """Print a formatted report of the analysis."""
         result = self.extract_with_metadata(text)
+        frequency = self.analyze_frequency(text)
+        detailed_frequency = self.analyze_frequency_detailed(text)
         
         print(f"\n{'='*60}")
         print(f"{title}")
@@ -368,19 +404,30 @@ class LogExtractor:
             for pkg in result['categorized']['packages']:
                 print(f"  - {pkg}")
         
-        if self.include_keywords:
+        if self.has_keywords():
             print(f"\nKeywords ({result['summary']['keywords_count']}):")
             for kw in result['categorized']['keywords']:
                 print(f"  - {kw}")
         
-        if self.custom_keywords:
-            print(f"\nCustom Keywords ({result['summary']['custom_keywords_count']}):")
-            for ckw in result['categorized']['custom_keywords']:
-                print(f"  - {ckw}")
-        
-        # Frequency analysis
-        frequency = self.analyze_frequency(text)
+        # Enhanced frequency analysis
         if frequency:
-            print(f"\nFREQUENCY ANALYSIS (Top 10):")
-            for finding, count in list(frequency.items())[:10]:
-                print(f"  - {finding}: {count} occurrences")
+            print(f"\nFREQUENCY ANALYSIS (All Items):")
+            for finding, count in frequency.items():
+                category = detailed_frequency.get(finding, {}).get('category', 'unknown')
+                print(f"  - {finding} ({category}): {count} occurrences")
+        
+        # Top items by category
+        if frequency:
+            print(f"\nTOP ITEMS BY CATEGORY:")
+            categories = {}
+            for finding, info in detailed_frequency.items():
+                category = info['category']
+                if category not in categories:
+                    categories[category] = []
+                categories[category].append((finding, info['count']))
+            
+            for category, items in categories.items():
+                top_items = sorted(items, key=lambda x: x[1], reverse=True)[:3]
+                if top_items:
+                    items_str = ', '.join([f'{item[0]}({item[1]})' for item in top_items])
+                    print(f"  {category.capitalize()}: {items_str}")
