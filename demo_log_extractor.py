@@ -1,64 +1,114 @@
 from model.log_extractor import LogExtractor
-def main():
-    """Demonstrate the optimized ExceptionExtractor."""
+import re
+
+def demonstrate_overcounting_fix():
+    """Demonstrate how the fix prevents overcounting."""
     
-    # Test data with various exception types
     test_text = """
-    2024-01-15 10:30:15 ERROR: FileNotFoundError: File not found
-    2024-01-15 10:30:16 INFO: Process started
-    2024-01-15 10:30:20 WARNING: MendixRuntimeException: Business logic error
-    2024-01-15 10:30:25 ERROR: java.lang.NullPointerException: Null reference
-        at com.example.Processor.handle(Processor.java:123)
-    2024-01-15 10:30:30 Caused by: org.springframework.dao.DataAccessException
-    2024-01-15 10:30:35 raise CustomBusinessException("validation failed")
-    2024-01-15 10:30:40 catch (IOException ex)
-    2024-01-15 10:30:45 Multiple occurrences: MendixRuntimeException MendixRuntimeException
-    2024-01-15 10:30:50 AnotherMendixRuntimeException: Another issue
+    com.mendix.MendixRuntimeException: Business logic error
+    MendixRuntimeException: Same exception without package
+    at com.mendix.internal.Processor.handle(MendixRuntimeException.java:123)
+    raise MendixRuntimeException("error")
+    catch (MendixRuntimeException ex)
+    Another MendixRuntimeException in the same line MendixRuntimeException
     """
     
-    # Create optimized extractor
-    extractor = LogExtractor(
-        include_package_names=True,
-        keywords=["error", "exception", "failure"]
-    )
-    
-    print("Optimized ExceptionExtractor Demonstration")
+    print("Overcounting Fix Demonstration")
     print("=" * 60)
     print("Test Text:")
     print(test_text)
     print("\n" + "=" * 60)
     
-    # Basic extraction
-    print("1. Basic Extraction:")
+    extractor = LogExtractor(
+        include_package_names=True,
+        prefer_simple_names=True,
+        keywords=["error", "exception"]
+    )
+    
+    # Show what gets extracted
     findings = extractor.extract_from_text(test_text)
-    for i, finding in enumerate(findings, 1):
-        print(f"   {i:2d}. {finding}")
+    print(f"Extracted findings: {findings}")
     
-    # Frequency analysis
-    print("\n2. Frequency Analysis:")
-    frequency = extractor.analyze_frequency(test_text)
-    for item, count in frequency.items():
-        print(f"   {item}: {count}")
+    # Show frequency with different methods
+    print("\nFrequency Analysis Methods:")
     
-    # Advanced frequency analysis
-    print("\n3. Advanced Frequency Analysis (grouped):")
-    advanced_freq = extractor.analyze_frequency_advanced(test_text, group_similar=True)
-    for item, count in advanced_freq.items():
-        print(f"   {item}: {count}")
+    freq_basic = extractor.analyze_frequency(test_text)
+    print(f"Basic frequency: {freq_basic}")
     
-    # Line occurrences
-    print("\n4. Line Occurrences:")
-    line_occurrences = extractor.analyze_frequency_by_line(test_text)
-    for item, lines in line_occurrences.items():
-        print(f"   {item}: lines {lines}")
+    freq_exact = extractor.analyze_frequency_exact(test_text)
+    print(f"Exact frequency: {freq_exact}")
     
-    # Full metadata
-    print("\n5. Full Metadata:")
-    metadata = extractor.extract_with_metadata(test_text)
-    print(f"   Total findings: {metadata['summary']['total_findings']}")
-    print(f"   Total occurrences: {metadata['summary']['total_occurrences']}")
-    print(f"   Exceptions: {metadata['summary']['exceptions_count']}")
-    print(f"   Errors: {metadata['summary']['errors_count']}")
+    # Manual verification
+    print("\nManual Verification:")
+    manual_count_simple = len(re.findall(r'\bMendixRuntimeException\b', test_text))
+    manual_count_package = len(re.findall(r'\bcom\.mendix\.MendixRuntimeException\b', test_text))
+    print(f"Manual count - MendixRuntimeException: {manual_count_simple}")
+    print(f"Manual count - com.mendix.MendixRuntimeException: {manual_count_package}")
+    
+    # Show pattern matches
+    print("\nPattern Analysis:")
+    for pattern, pattern_type, priority in extractor._compiled_patterns:
+        matches = list(pattern.finditer(test_text))
+        if matches:
+            print(f"Pattern '{pattern_type}' (priority {priority}): {len(matches)} matches")
+            for match in matches[:2]:  # Show first 2 matches
+                print(f"  - '{match.group()}' at position {match.span()}")
+
+def test_multiple_pattern_scenarios():
+    """Test scenarios where multiple patterns could match the same text."""
+    
+    test_cases = [
+        {
+            'name': 'Package name in stack trace',
+            'text': 'at com.mendix.MendixRuntimeException.handle(File.java:123)',
+            'expected': ['MendixRuntimeException']
+        },
+        {
+            'name': 'Simple name in raise statement',
+            'text': 'raise MendixRuntimeException("error")',
+            'expected': ['MendixRuntimeException']
+        },
+        {
+            'name': 'Package name with colon',
+            'text': 'com.mendix.MendixRuntimeException: error message',
+            'expected': ['MendixRuntimeException']
+        },
+        {
+            'name': 'Simple name with colon', 
+            'text': 'MendixRuntimeException: error message',
+            'expected': ['MendixRuntimeException']
+        },
+        {
+            'name': 'Mixed occurrences',
+            'text': 'com.mendix.MendixRuntimeException and MendixRuntimeException',
+            'expected': ['MendixRuntimeException']
+        }
+    ]
+    
+    extractor = LogExtractor(
+        include_package_names=False,  # Only want simple names for clarity
+        prefer_simple_names=True,
+        keywords=[]
+    )
+    
+    print("\n" + "=" * 60)
+    print("Multiple Pattern Scenario Tests")
+    print("=" * 60)
+    
+    for case in test_cases:
+        print(f"\nTest: {case['name']}")
+        print(f"Text: '{case['text']}'")
+        
+        findings = extractor.extract_from_text(case['text'])
+        frequency = extractor.analyze_frequency_exact(case['text'])
+        
+        print(f"Expected: {case['expected']}")
+        print(f"Actual findings: {findings}")
+        print(f"Frequency: {frequency}")
+        
+        status = "✓ PASS" if findings == case['expected'] else "✗ FAIL"
+        print(f"Status: {status}")
 
 if __name__ == "__main__":
-    main()
+    demonstrate_overcounting_fix()
+    test_multiple_pattern_scenarios()
