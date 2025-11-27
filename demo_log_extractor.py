@@ -94,7 +94,7 @@ def test_double_counting_scenario():
         print("✗ STILL BROKEN: Double-counting persists")
 
 if __name__ == "__main__":
-    demonstrate_frequency_fix()
+    # demonstrate_frequency_fix()
     test_double_counting_scenario()
     
     # Test with metadata extraction
@@ -102,7 +102,15 @@ if __name__ == "__main__":
     print("Metadata Extraction with Fixed Frequency")
     print("=" * 60)
     
-    test_text = "com.mendix.MendixRuntimeException com.mendix.MendixRuntimeException"
+    test_text = "com.mendix.MendixRuntimeException com.mendix.MendixRuntimeException MendixRuntimeException"
+    test_text = """
+    com.mendix.MendixRuntimeException: First occurrence
+    com.mendix.MendixRuntimeException: Second occurrence  
+    MendixRuntimeException: Third occurrence (simple name)
+    java.lang.NullPointerException: Fourth occurrence
+    at com.mendix.internal.Processor.handle(MendixRuntimeException.java:123)
+    """
+
     extractor = LogExtractor(
         include_package_names=True,
         prefer_simple_names=True
@@ -112,3 +120,6 @@ if __name__ == "__main__":
     print(f"Total occurrences: {metadata['summary']['total_occurrences']}")
     print(f"Frequency: {metadata['frequency']}")
     print(f"Detailed frequency: {metadata['detailed_frequency']}")
+    import json
+    jsn_str = json.dumps(metadata['detailed_frequency'], indent=4)
+    print(jsn_str)
