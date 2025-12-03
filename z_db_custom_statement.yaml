@@ -1,87 +1,39 @@
-# slow-queries-extend.yaml
+# optimized-minimal-queries.yaml
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: postgres-exporter-slow-queries
+  name: postgres-exporter-optimized
   namespace: monitoring
 data:
   queries.yaml: |
-    pg_stat_statements_all:
+    # ======================= 优化版：只返回必需的5个指标 =======================
+    pg_stat_statements_essential:
       query: |
         SELECT 
-          -- 基础字段
-          pss.queryid::text,
-          pd.datname,
-          pu.usename,
-          LEFT(pss.query, 150) as query_short,
-          pss.calls,
-          pss.total_exec_time,
-          pss.mean_exec_time,
-          pss.rows,
-          
-          -- 可选字段（处理可能不存在的情况）
-          COALESCE(pss.min_exec_time, 0) as min_exec_time,
-          COALESCE(pss.max_exec_time, 0) as max_exec_time,
-          COALESCE(pss.stddev_exec_time, 0) as stddev_exec_time,
-          COALESCE(pss.shared_blks_hit, 0) as shared_blks_hit,
-          COALESCE(pss.shared_blks_read, 0) as shared_blks_read,
-          COALESCE(pss.shared_blks_dirtied, 0) as shared_blks_dirtied,
-          COALESCE(pss.shared_blks_written, 0) as shared_blks_written,
-          COALESCE(pss.local_blks_hit, 0) as local_blks_hit,
-          COALESCE(pss.local_blks_read, 0) as local_blks_read,
-          COALESCE(pss.local_blks_dirtied, 0) as local_blks_dirtied,
-          COALESCE(pss.local_blks_written, 0) as local_blks_written,
-          COALESCE(pss.temp_blks_read, 0) as temp_blks_read,
-          COALESCE(pss.temp_blks_written, 0) as temp_blks_written,
-          COALESCE(pss.blk_read_time, 0) as blk_read_time,
-          COALESCE(pss.blk_write_time, 0) as blk_write_time,
-          
-          -- 计算字段
-          CASE 
-            WHEN pss.calls > 0 
-            THEN pss.total_exec_time / pss.calls 
-            ELSE 0 
-          END as avg_time_per_call,
-          
-          -- 缓存命中率
-          CASE 
-            WHEN (COALESCE(pss.shared_blks_hit, 0) + COALESCE(pss.shared_blks_read, 0)) > 0 
-            THEN COALESCE(pss.shared_blks_hit, 0)::float / 
-                 (COALESCE(pss.shared_blks_hit, 0) + COALESCE(pss.shared_blks_read, 0))
-            ELSE 0 
-          END as cache_hit_ratio,
-          
-          -- 分类
-          CASE 
-            WHEN pss.mean_exec_time > 1000 THEN 'critical'
-            WHEN pss.mean_exec_time > 100 THEN 'warning'
-            WHEN pss.mean_exec_time > 10 THEN 'notice'
-            ELSE 'normal'
-          END as severity,
-          
-          -- 查询类型识别
-          CASE 
-            WHEN pss.query ILIKE '%select%' THEN 'SELECT'
-            WHEN pss.query ILIKE '%insert%' THEN 'INSERT'
-            WHEN pss.query ILIKE '%update%' THEN 'UPDATE'
-            WHEN pss.query ILIKE '%delete%' THEN 'DELETE'
-            WHEN pss.query ILIKE '%create%' OR pss.query ILIKE '%drop%' OR pss.query ILIKE '%alter%' THEN 'DDL'
-            WHEN pss.query ILIKE '%truncate%' THEN 'TRUNCATE'
-            ELSE 'OTHER'
-          END as query_type,
-          
-          -- 应用名称（如果有）
-          COALESCE(NULLIF(SPLIT_PART(pss.query, '/*', 2), ''), 'unknown') as app_hint
-          
+          pss.queryid::text as queryid,
+          pd.datname as datname,
+          pu.usename as usename,
+          LEFT(
+            CASE 
+              -- 清理查询文本，移除换行和多余空格
+              WHEN pss.query LIKE '/*%*/%' 
+              THEN REGEXP_REPLACE(pss.query, '/\*.*?\*/', '', 'g')
+              ELSE pss.query
+            END, 
+            150
+          ) as query_short,
+          COALESCE(pss.max_exec_time, 0) as max_exec_time
         FROM pg_stat_statements pss
         JOIN pg_database pd ON pd.oid = pss.dbid
         JOIN pg_user pu ON pu.usesysid = pss.userid
         WHERE pd.datname NOT IN ('template0', 'template1')
           AND pd.datname IS NOT NULL
+          -- 可选：过滤掉一些系统查询
+          AND NOT (pss.query LIKE 'DEALLOCATE%' OR pss.query LIKE '%pg_stat%')
       metrics:
         - queryid:
             usage: "LABEL"
-            description: "Query ID"
+            description: "Query ID (hash)"
         - datname:
             usage: "LABEL"
             description: "Database name"
@@ -90,77 +42,82 @@ data:
             description: "Username"
         - query_short:
             usage: "LABEL"
-            description: "Query text (first 150 chars)"
-        - severity:
-            usage: "LABEL"
-            description: "Performance severity"
-        - query_type:
-            usage: "LABEL"
-            description: "Type of SQL query"
-        - app_hint:
-            usage: "LABEL"
-            description: "Application hint from comment"
-        - calls:
-            usage: "COUNTER"
-            description: "Number of times executed"
-        - total_exec_time:
-            usage: "GAUGE"
-            description: "Total execution time in milliseconds"
-        - mean_exec_time:
-            usage: "GAUGE"
-            description: "Mean execution time in milliseconds"
-        - min_exec_time:
-            usage: "GAUGE"
-            description: "Minimum execution time in milliseconds"
+            description: "Query text (first 150 chars, cleaned)"
         - max_exec_time:
             usage: "GAUGE"
             description: "Maximum execution time in milliseconds"
-        - stddev_exec_time:
-            usage: "GAUGE"
-            description: "Standard deviation of execution time in milliseconds"
-        - rows:
-            usage: "COUNTER"
-            description: "Total rows retrieved or affected"
-        - shared_blks_hit:
-            usage: "COUNTER"
-            description: "Shared blocks cache hits"
-        - shared_blks_read:
-            usage: "COUNTER"
-            description: "Shared blocks read from disk"
-        - shared_blks_dirtied:
-            usage: "COUNTER"
-            description: "Shared blocks dirtied"
-        - shared_blks_written:
-            usage: "COUNTER"
-            description: "Shared blocks written"
-        - local_blks_hit:
-            usage: "COUNTER"
-            description: "Local blocks cache hits"
-        - local_blks_read:
-            usage: "COUNTER"
-            description: "Local blocks read from disk"
-        - local_blks_dirtied:
-            usage: "COUNTER"
-            description: "Local blocks dirtied"
-        - local_blks_written:
-            usage: "COUNTER"
-            description: "Local blocks written"
-        - temp_blks_read:
-            usage: "COUNTER"
-            description: "Temporary blocks read"
-        - temp_blks_written:
-            usage: "COUNTER"
-            description: "Temporary blocks written"
-        - blk_read_time:
-            usage: "GAUGE"
-            description: "Block read time in milliseconds"
-        - blk_write_time:
-            usage: "GAUGE"
-            description: "Block write time in milliseconds"
-        - avg_time_per_call:
-            usage: "GAUGE"
-            description: "Average time per call in milliseconds"
-        - cache_hit_ratio:
-            usage: "GAUGE"
-            description: "Cache hit ratio (0-1)"
     
+    # ======================= 备选方案：进一步优化的版本 =======================
+    # 如果上面的查询仍然有性能问题，使用这个更轻量的版本
+    pg_stat_statements_minimal:
+      query: |
+        SELECT 
+          pss.queryid::text,
+          pd.datname,
+          pu.usename,
+          -- 只取前100字符，并移除注释
+          REGEXP_REPLACE(
+            SUBSTRING(pss.query FROM 1 FOR 100), 
+            '--.*?(\n|$)|/\*.*?\*/', 
+            '', 
+            'g'
+          ) as query_short,
+          GREATEST(
+            COALESCE(pss.max_exec_time, 0),
+            COALESCE(pss.mean_exec_time, 0)
+          ) as max_exec_time_approx
+        FROM pg_stat_statements pss
+        INNER JOIN pg_database pd ON pd.oid = pss.dbid
+        INNER JOIN pg_user pu ON pu.usesysid = pss.userid
+        WHERE pd.datname NOT LIKE 'template%'
+          AND pss.calls > 0  -- 确保至少执行过一次
+      metrics:
+        - queryid:
+            usage: "LABEL"
+        - datname:
+            usage: "LABEL"
+        - usename:
+            usage: "LABEL"
+        - query_short:
+            usage: "LABEL"
+        - max_exec_time_approx:
+            usage: "GAUGE"
+            description: "Approximate max execution time (ms)"
+    
+    # ======================= 聚合版本：减少基数 =======================
+    # 如果单个查询太多导致高基数问题，可以使用这个聚合版本
+    pg_stat_statements_aggregated:
+      query: |
+        WITH top_queries AS (
+          SELECT 
+            pss.queryid,
+            pd.datname,
+            pu.usename,
+            LEFT(pss.query, 100) as query_sample,
+            pss.max_exec_time,
+            ROW_NUMBER() OVER (PARTITION BY pd.datname, pu.usename ORDER BY pss.max_exec_time DESC) as rn
+          FROM pg_stat_statements pss
+          JOIN pg_database pd ON pd.oid = pss.dbid
+          JOIN pg_user pu ON pu.usesysid = pss.userid
+          WHERE pd.datname NOT IN ('template0', 'template1')
+            AND pss.max_exec_time > 100  -- 只关注执行时间超过100ms的查询
+        )
+        SELECT 
+          queryid::text,
+          datname,
+          usename,
+          query_sample as query_short,
+          max_exec_time
+        FROM top_queries
+        WHERE rn <= 50  -- 每个用户在每个数据库中最多取50个最慢查询
+      metrics:
+        - queryid:
+            usage: "LABEL"
+        - datname:
+            usage: "LABEL"
+        - usename:
+            usage: "LABEL"
+        - query_short:
+            usage: "LABEL"
+        - max_exec_time:
+            usage: "GAUGE"
