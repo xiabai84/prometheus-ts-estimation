@@ -74,69 +74,113 @@ data:
             usage: "GAUGE"
             description: "Transaction duration in seconds"
     
-    pg_stat_statements_slow:
+    pg_stat_statements_runtime:
       query: |
         SELECT 
-          datname,
-          usename,
-          queryid,
-          LEFT(query, 200) as query_sample,
-          calls,
-          total_exec_time,
-          mean_exec_time,
-          rows,
-          shared_blks_hit,
-          shared_blks_read,
-          shared_blks_dirtied,
-          shared_blks_written,
-          local_blks_hit,
-          local_blks_read,
-          local_blks_dirtied,
-          local_blks_written,
-          temp_blks_read,
-          temp_blks_written,
-          blk_read_time,
-          blk_write_time
-        FROM pg_stat_statements 
-        JOIN pg_database ON pg_database.oid = pg_stat_statements.dbid
-        JOIN pg_user ON pg_user.usesysid = pg_stat_statements.userid
+          pss.queryid,
+          pd.datname,
+          pu.usename,
+          LEFT(pss.query, 300) as query_sample,
+          pss.calls,
+          pss.total_exec_time as total_exec_time_ms,
+          pss.mean_exec_time as mean_exec_time_ms,
+          pss.min_exec_time as min_exec_time_ms,
+          pss.max_exec_time as max_exec_time_ms,
+          pss.stddev_exec_time as stddev_exec_time_ms,
+          -- 计算百分位数（如果支持）
+          pss.total_plan_time as total_plan_time_ms,
+          pss.mean_plan_time as mean_plan_time_ms,
+          -- 性能指标
+          pss.rows,
+          pss.shared_blks_hit,
+          pss.shared_blks_read,
+          pss.shared_blks_hit + pss.shared_blks_read as shared_blks_total,
+          CASE 
+            WHEN (pss.shared_blks_hit + pss.shared_blks_read) > 0 
+            THEN pss.shared_blks_hit::float / (pss.shared_blks_hit + pss.shared_blks_read) 
+            ELSE 0 
+          END as cache_hit_ratio,
+          -- 执行频率
+          CASE 
+            WHEN pss.calls > 0 
+            THEN pss.total_exec_time / pss.calls 
+            ELSE 0 
+          END as avg_exec_time_per_call_ms,
+          -- 时间窗口
+          now() - pss.query_start_time as query_age,
+          -- 分类
+          CASE 
+            WHEN pss.mean_exec_time > 1000 THEN 'very_slow'
+            WHEN pss.mean_exec_time > 100 THEN 'slow'
+            WHEN pss.mean_exec_time > 10 THEN 'medium'
+            ELSE 'fast'
+          END as performance_category
+        FROM pg_stat_statements pss
+        JOIN pg_database pd ON pd.oid = pss.dbid
+        JOIN pg_user pu ON pu.usesysid = pss.userid
         WHERE 
-          pg_database.datname NOT IN ('template0', 'template1')
-          AND mean_exec_time > 100
-        ORDER BY mean_exec_time DESC
-        LIMIT 10
+          pd.datname NOT IN ('template0', 'template1')
+          AND pd.datname = 'db-instance-xia'  -- 指定您的数据库
+        ORDER BY pss.total_exec_time DESC
       metrics:
+        - queryid:
+            usage: "LABEL"
+            description: "Query ID"
         - datname:
             usage: "LABEL"
             description: "Database name"
         - usename:
             usage: "LABEL"
-            description: "User name"
-        - queryid:
-            usage: "LABEL"
-            description: "Query ID"
+            description: "Username"
         - query_sample:
             usage: "LABEL"
-            description: "Query sample (first 200 chars)"
+            description: "Query sample (truncated)"
+        - performance_category:
+            usage: "LABEL"
+            description: "Performance category"
         - calls:
             usage: "COUNTER"
             description: "Number of times executed"
-        - total_exec_time:
+        - total_exec_time_ms:
             usage: "GAUGE"
             description: "Total execution time in milliseconds"
-        - mean_exec_time:
+        - mean_exec_time_ms:
             usage: "GAUGE"
             description: "Mean execution time in milliseconds"
+        - min_exec_time_ms:
+            usage: "GAUGE"
+            description: "Minimum execution time in milliseconds"
+        - max_exec_time_ms:
+            usage: "GAUGE"
+            description: "Maximum execution time in milliseconds"
+        - stddev_exec_time_ms:
+            usage: "GAUGE"
+            description: "Standard deviation of execution time in milliseconds"
+        - total_plan_time_ms:
+            usage: "GAUGE"
+            description: "Total planning time in milliseconds"
+        - mean_plan_time_ms:
+            usage: "GAUGE"
+            description: "Mean planning time in milliseconds"
+        - avg_exec_time_per_call_ms:
+            usage: "GAUGE"
+            description: "Average execution time per call in milliseconds"
         - rows:
             usage: "COUNTER"
             description: "Total rows retrieved or affected"
         - shared_blks_hit:
             usage: "COUNTER"
-            description: "Shared block cache hits"
+            description: "Shared blocks cache hits"
         - shared_blks_read:
             usage: "COUNTER"
-            description: "Shared blocks read"
-    
+            description: "Shared blocks read from disk"
+        - shared_blks_total:
+            usage: "COUNTER"
+            description: "Total shared blocks accessed"
+        - cache_hit_ratio:
+            usage: "GAUGE"
+            description: "Cache hit ratio (0-1)"
+
     pg_slow_queries_hourly:
       query: |
         WITH current_slow_queries AS (
