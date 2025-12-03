@@ -6,25 +6,78 @@ metadata:
   namespace: monitoring
 data:
   queries.yaml: |
-    pg_stat_statements_runtime:
+    pg_stat_statements_all:
       query: |
         SELECT 
-          queryid::text,
-          datname,
-          usename,
-          LEFT(query, 400) as query_sample,
-          calls,
-          total_exec_time,
-          mean_exec_time,
-          min_exec_time,
-          max_exec_time,
-          rows,
-          shared_blks_hit,
-          shared_blks_read
+          -- 基础字段
+          pss.queryid::text,
+          pd.datname,
+          pu.usename,
+          LEFT(pss.query, 150) as query_short,
+          pss.calls,
+          pss.total_exec_time,
+          pss.mean_exec_time,
+          pss.rows,
+          
+          -- 可选字段（处理可能不存在的情况）
+          COALESCE(pss.min_exec_time, 0) as min_exec_time,
+          COALESCE(pss.max_exec_time, 0) as max_exec_time,
+          COALESCE(pss.stddev_exec_time, 0) as stddev_exec_time,
+          COALESCE(pss.shared_blks_hit, 0) as shared_blks_hit,
+          COALESCE(pss.shared_blks_read, 0) as shared_blks_read,
+          COALESCE(pss.shared_blks_dirtied, 0) as shared_blks_dirtied,
+          COALESCE(pss.shared_blks_written, 0) as shared_blks_written,
+          COALESCE(pss.local_blks_hit, 0) as local_blks_hit,
+          COALESCE(pss.local_blks_read, 0) as local_blks_read,
+          COALESCE(pss.local_blks_dirtied, 0) as local_blks_dirtied,
+          COALESCE(pss.local_blks_written, 0) as local_blks_written,
+          COALESCE(pss.temp_blks_read, 0) as temp_blks_read,
+          COALESCE(pss.temp_blks_written, 0) as temp_blks_written,
+          COALESCE(pss.blk_read_time, 0) as blk_read_time,
+          COALESCE(pss.blk_write_time, 0) as blk_write_time,
+          
+          -- 计算字段
+          CASE 
+            WHEN pss.calls > 0 
+            THEN pss.total_exec_time / pss.calls 
+            ELSE 0 
+          END as avg_time_per_call,
+          
+          -- 缓存命中率
+          CASE 
+            WHEN (COALESCE(pss.shared_blks_hit, 0) + COALESCE(pss.shared_blks_read, 0)) > 0 
+            THEN COALESCE(pss.shared_blks_hit, 0)::float / 
+                 (COALESCE(pss.shared_blks_hit, 0) + COALESCE(pss.shared_blks_read, 0))
+            ELSE 0 
+          END as cache_hit_ratio,
+          
+          -- 分类
+          CASE 
+            WHEN pss.mean_exec_time > 1000 THEN 'critical'
+            WHEN pss.mean_exec_time > 100 THEN 'warning'
+            WHEN pss.mean_exec_time > 10 THEN 'notice'
+            ELSE 'normal'
+          END as severity,
+          
+          -- 查询类型识别
+          CASE 
+            WHEN pss.query ILIKE '%select%' THEN 'SELECT'
+            WHEN pss.query ILIKE '%insert%' THEN 'INSERT'
+            WHEN pss.query ILIKE '%update%' THEN 'UPDATE'
+            WHEN pss.query ILIKE '%delete%' THEN 'DELETE'
+            WHEN pss.query ILIKE '%create%' OR pss.query ILIKE '%drop%' OR pss.query ILIKE '%alter%' THEN 'DDL'
+            WHEN pss.query ILIKE '%truncate%' THEN 'TRUNCATE'
+            ELSE 'OTHER'
+          END as query_type,
+          
+          -- 应用名称（如果有）
+          COALESCE(NULLIF(SPLIT_PART(pss.query, '/*', 2), ''), 'unknown') as app_hint
+          
         FROM pg_stat_statements pss
         JOIN pg_database pd ON pd.oid = pss.dbid
         JOIN pg_user pu ON pu.usesysid = pss.userid
         WHERE pd.datname NOT IN ('template0', 'template1')
+          AND pd.datname IS NOT NULL
       metrics:
         - queryid:
             usage: "LABEL"
@@ -35,30 +88,79 @@ data:
         - usename:
             usage: "LABEL"
             description: "Username"
-        - query_sample:
+        - query_short:
             usage: "LABEL"
-            description: "Query sample"
+            description: "Query text (first 150 chars)"
+        - severity:
+            usage: "LABEL"
+            description: "Performance severity"
+        - query_type:
+            usage: "LABEL"
+            description: "Type of SQL query"
+        - app_hint:
+            usage: "LABEL"
+            description: "Application hint from comment"
         - calls:
             usage: "COUNTER"
-            description: "Number of calls"
+            description: "Number of times executed"
         - total_exec_time:
             usage: "GAUGE"
-            description: "Total execution time (ms)"
+            description: "Total execution time in milliseconds"
         - mean_exec_time:
             usage: "GAUGE"
-            description: "Mean execution time (ms)"
+            description: "Mean execution time in milliseconds"
         - min_exec_time:
             usage: "GAUGE"
-            description: "Min execution time (ms)"
+            description: "Minimum execution time in milliseconds"
         - max_exec_time:
             usage: "GAUGE"
-            description: "Max execution time (ms)"
+            description: "Maximum execution time in milliseconds"
+        - stddev_exec_time:
+            usage: "GAUGE"
+            description: "Standard deviation of execution time in milliseconds"
         - rows:
             usage: "COUNTER"
-            description: "Total rows"
+            description: "Total rows retrieved or affected"
         - shared_blks_hit:
             usage: "COUNTER"
-            description: "Shared blocks hit"
+            description: "Shared blocks cache hits"
         - shared_blks_read:
             usage: "COUNTER"
-            description: "Shared blocks read"
+            description: "Shared blocks read from disk"
+        - shared_blks_dirtied:
+            usage: "COUNTER"
+            description: "Shared blocks dirtied"
+        - shared_blks_written:
+            usage: "COUNTER"
+            description: "Shared blocks written"
+        - local_blks_hit:
+            usage: "COUNTER"
+            description: "Local blocks cache hits"
+        - local_blks_read:
+            usage: "COUNTER"
+            description: "Local blocks read from disk"
+        - local_blks_dirtied:
+            usage: "COUNTER"
+            description: "Local blocks dirtied"
+        - local_blks_written:
+            usage: "COUNTER"
+            description: "Local blocks written"
+        - temp_blks_read:
+            usage: "COUNTER"
+            description: "Temporary blocks read"
+        - temp_blks_written:
+            usage: "COUNTER"
+            description: "Temporary blocks written"
+        - blk_read_time:
+            usage: "GAUGE"
+            description: "Block read time in milliseconds"
+        - blk_write_time:
+            usage: "GAUGE"
+            description: "Block write time in milliseconds"
+        - avg_time_per_call:
+            usage: "GAUGE"
+            description: "Average time per call in milliseconds"
+        - cache_hit_ratio:
+            usage: "GAUGE"
+            description: "Cache hit ratio (0-1)"
+    
