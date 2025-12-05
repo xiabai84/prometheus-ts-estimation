@@ -1,0 +1,97 @@
+{{- range $key, $instance := .Values.exporters }}
+{{- if $instance.enabled }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "postgres-exporter.instance.name" (dict "instanceKey" $key "Values" $.Values "Chart" $.Chart "Release" $.Release) }}
+  labels:
+    {{- include "postgres-exporter.instance.labels" (dict "instanceKey" $key "Values" $.Values "Chart" $.Chart "Release" $.Release) | nindent 4 }}
+spec:
+  replicas: {{ $instance.replicaCount }}
+  selector:
+    matchLabels:
+      app: postgres-exporter
+      instance: {{ $key }}
+  template:
+    metadata:
+      labels:
+        app: postgres-exporter
+        instance: {{ $key }}
+        {{- include "postgres-exporter.instance.labels" (dict "instanceKey" $key "Values" $.Values "Chart" $.Chart "Release" $.Release) | nindent 8 }}
+    spec:
+      containers:
+      - name: postgres-exporter
+        image: "{{ $.Values.image.repository }}:{{ $.Values.image.tag }}"
+        imagePullPolicy: {{ $.Values.image.pullPolicy }}
+        
+        # Fixed configuration parameters
+        args:
+          - "--web.listen-address=:9187"
+          - "--web.telemetry-path=/metrics"
+          - "--log.level=info"
+          - "--auto-discover-databases"
+          - "--exclude-databases=template0,template1"
+          - "--extend.query-path=/etc/postgres-exporter/queries.yaml"
+        
+        env:
+        - name: DATA_SOURCE_NAME
+          value: {{ include "postgres-exporter.datasource" (dict "instance" $instance) | quote }}
+        - name: PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: {{ $instance.auth.existingSecret }}
+              key: {{ $instance.auth.passwordKey }}
+        
+        # Fixed resource limits
+        resources:
+          limits:
+            memory: "256Mi"
+            cpu: "500m"
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+        
+        # Fixed port configuration
+        ports:
+        - containerPort: 9187
+          name: metrics
+        
+        # Fixed volume mounts
+        volumeMounts:
+        - name: config
+          mountPath: /etc/postgres-exporter
+          readOnly: true
+        
+        # Fixed probe configuration
+        livenessProbe:
+          httpGet:
+            path: /metrics
+            port: 9187
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        
+        readinessProbe:
+          httpGet:
+            path: /metrics
+            port: 9187
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        
+        # Fixed security context
+        securityContext:
+          runAsUser: 1000
+          runAsGroup: 1000
+          readOnlyRootFilesystem: true
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+              - ALL
+      
+      # Fixed configuration volume
+      volumes:
+      - name: config
+        configMap:
+          name: {{ include "postgres-exporter.instance.name" (dict "instanceKey" $key "Values" $.Values "Chart" $.Chart "Release" $.Release) }}-config
+{{- end }}
+{{- end }}

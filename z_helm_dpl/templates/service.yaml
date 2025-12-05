@@ -1,0 +1,21 @@
+{{- range $key, $instance := .Values.exporters }}
+{{- if $instance.enabled }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "postgres-exporter.instance.name" (dict "instanceKey" $key "Values" $.Values "Chart" $.Chart "Release" $.Release) }}
+  labels:
+    {{- include "postgres-exporter.instance.labels" (dict "instanceKey" $key "Values" $.Values "Chart" $.Chart "Release" $.Release) | nindent 4 }}
+spec:
+  type: {{ $.Values.service.type }}
+  ports:
+  - port: {{ $.Values.service.port }}
+    targetPort: metrics
+    protocol: TCP
+    name: metrics
+  selector:
+    app: postgres-exporter
+    instance: {{ $key }}
+{{- end }}
+{{- end }}

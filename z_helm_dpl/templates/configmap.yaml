@@ -1,0 +1,62 @@
+{{- range $key, $instance := .Values.exporters }}
+{{- if $instance.enabled }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "postgres-exporter.instance.name" (dict "instanceKey" $key "Values" $.Values "Chart" $.Chart "Release" $.Release) }}-config
+  labels:
+    {{- include "postgres-exporter.instance.labels" (dict "instanceKey" $key "Values" $.Values "Chart" $.Chart "Release" $.Release) | nindent 4 }}
+data:
+  queries.yaml: |
+    # Fixed custom query configuration
+    pg_slow_queries:
+      query: |
+        SELECT 
+          queryid::text,
+          datname,
+          usename,
+          LEFT(query, 150) as query_short,
+          max_exec_time
+        FROM pg_stat_statements
+        JOIN pg_database ON pg_database.oid = pg_stat_statements.dbid
+        JOIN pg_user ON pg_user.usesysid = pg_stat_statements.userid
+        WHERE datname NOT IN ('template0', 'template1')
+      metrics:
+        - queryid:
+            usage: "LABEL"
+            description: "Query ID"
+        - datname:
+            usage: "LABEL"
+            description: "Database name"
+        - usename:
+            usage: "LABEL"
+            description: "Username"
+        - query_short:
+            usage: "LABEL"
+            description: "Query text (first 150 chars)"
+        - max_exec_time:
+            usage: "GAUGE"
+            description: "Maximum execution time in milliseconds"
+    
+    pg_active_connections:
+      query: |
+        SELECT 
+          datname,
+          usename,
+          COUNT(*) as active_connections
+        FROM pg_stat_activity 
+        WHERE state = 'active'
+        GROUP BY datname, usename
+      metrics:
+        - datname:
+            usage: "LABEL"
+            description: "Database name"
+        - usename:
+            usage: "LABEL"
+            description: "Username"
+        - active_connections:
+            usage: "GAUGE"
+            description: "Active connections count"
+{{- end }}
+{{- end }}

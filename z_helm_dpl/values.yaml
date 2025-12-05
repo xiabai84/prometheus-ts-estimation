@@ -1,0 +1,36 @@
+# custom-values.yaml
+image:
+  tag: "v0.15.0"
+
+exporters:
+  prod-db:
+    enabled: true
+    replicaCount: 2
+    podName: "postgres-exporter-prod"
+    
+    database:
+      host: "postgres-prod.cluster.local"
+      port: 5432
+      name: "app_production"
+      sslmode: "require"
+    
+    auth:
+      username: "monitoring_user"
+      existingSecret: "postgres-exporter-secrets"
+      passwordKey: "prod-db-password"
+  
+  staging-db:
+    enabled: true
+    replicaCount: 1
+    podName: "postgres-exporter-staging"
+    
+    database:
+      host: "postgres-staging.cluster.local"
+      port: 5432
+      name: "app_staging"
+      sslmode: "prefer"
+    
+    auth:
+      username: "monitoring_user"
+      existingSecret: "postgres-exporter-secrets"
+      passwordKey: "staging-db-password"
